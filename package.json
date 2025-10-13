@@ -1,0 +1,794 @@
+{
+  "name": "knoxchat",
+  "icon": "media/icon.png",
+  "author": "knoxchat",
+  "version": "0.7.6",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/knoxchat/knox"
+  },
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "bugs": {
+    "url": "https://github.com/knoxai/knox/issues",
+    "email": "edal@live.cn"
+  },
+  "homepage": "https://knox.chat",
+  "qna": "https://github.com/knoxchat/knox/issues/new/choose",
+  "license": "MIT",
+  "displayName": "Knox: AI-Powered Precision. Agent-Driven Results.",
+  "pricing": "Free",
+  "description": "Unleashing AI Through Elegant Code and Powerful Systems.",
+  "publisher": "knoxchat",
+  "engines": {
+    "vscode": "^1.84.0",
+    "node": ">=20.19.2"
+  },
+  "engine-strict": true,
+  "galleryBanner": {
+    "color": "#1E1E2E",
+    "theme": "dark"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages",
+    "Education",
+    "Machine Learning",
+    "Snippets",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "chatgpt",
+    "openapi",
+    "github",
+    "copilot",
+    "claude",
+    "sonnet",
+    "codegpt",
+    "ai",
+    "knox",
+    "devops",
+    "ci/cd"
+  ],
+  "activationEvents": [
+    "onUri",
+    "onStartupFinished",
+    "onView:knoxGUIView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "filenames": [
+          "config.json",
+          ".knoxrc.json"
+        ],
+        "id": "jsonc"
+      },
+      {
+        "id": "promptLanguage",
+        "extensions": [
+          ".prompt"
+        ],
+        "aliases": [
+          "Prompt Language"
+        ],
+        "configuration": "./prompt-file-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "promptLanguage",
+        "scopeName": "source.prompt",
+        "path": "./media/prompt.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Knox",
+      "properties": {
+        "knoxchat.showInlineTip": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline suggestions for Knox shortcuts (e.g., \"Cmd/Ctrl L to add code to chat, Cmd/Ctrl I to edit code\")"
+        },
+        "knoxchat.disableQuickFix": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable quick fix functionality"
+        },
+        "knoxchat.enableQuickActions": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable quick actions functionality"
+        },
+        "knoxchat.enableTabAutocomplete": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable Knox autocomplete functionality"
+        },
+        "knoxchat.pauseTabAutocompleteOnBattery": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Pause Knox autocomplete when battery power is low"
+        },
+        "knox.checkpoints.maxCheckpoints": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Maximum number of checkpoints"
+        },
+        "knox.checkpoints.retentionDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Checkpoint retention days"
+        },
+        "knox.checkpoints.maxStorageBytes": {
+          "type": "number",
+          "default": 1000000000,
+          "minimum": 1048576,
+          "description": "Maximum storage size (bytes)"
+        },
+        "knox.checkpoints.maxFilesPerCheckpoint": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Maximum number of files per checkpoint"
+        },
+        "knox.checkpoints.enableCompression": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable compression"
+        },
+        "knox.checkpoints.trackedExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "js",
+            "jsx",
+            "ts",
+            "tsx",
+            "py",
+            "java",
+            "cpp",
+            "c",
+            "cs",
+            "go",
+            "rs",
+            "php",
+            "rb",
+            "swift",
+            "kt",
+            "html",
+            "css",
+            "scss",
+            "json",
+            "yaml",
+            "yml",
+            "md",
+            "txt"
+          ],
+          "description": "Tracked file extensions"
+        },
+        "knox.checkpoints.autoCleanup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically clean up old checkpoints"
+        },
+        "knox.checkpoints.cleanupIntervalHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 8760,
+          "description": "Cleanup interval (hours)"
+        },
+        "knox.checkpoints.enableAutoCheckpoints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic checkpoint creation for AI conversations"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "knoxchat.applyCodeFromChat",
+        "category": "Knox",
+        "title": "Apply Code from Chat",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.acceptDiff",
+        "category": "Knox",
+        "title": "Accept Diff",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.rejectDiff",
+        "category": "Knox",
+        "title": "Reject Diff",
+        "group": "Knox",
+        "icon": "media/stop.png"
+      },
+      {
+        "command": "knoxchat.acceptVerticalDiffBlock",
+        "category": "Knox",
+        "title": "Accept Vertical Diff Block",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.rejectVerticalDiffBlock",
+        "category": "Knox",
+        "title": "Reject Vertical Diff Block",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.focusEdit",
+        "category": "Knox",
+        "title": "Generate Code",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.focusKnoxInput",
+        "category": "Knox",
+        "title": "Add as Context and Clear Chat",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.focusKnoxInputWithoutClear",
+        "category": "Knox",
+        "title": "Add as Context",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.debugTerminal",
+        "category": "Knox",
+        "title": "Debug Terminal",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.exitEditMode",
+        "category": "Knox",
+        "title": "Exit Edit Mode",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.openConfigPage",
+        "category": "Knox",
+        "title": "Settings",
+        "icon": "media/config.png",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.toggleTabAutocompleteEnabled",
+        "category": "Knox",
+        "title": "Toggle Autocomplete Enabled",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.selectFilesAsContext",
+        "category": "Knox",
+        "title": "Select Files as Context",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.newSession",
+        "category": "Knox",
+        "title": "New Conversation",
+        "icon": "media/add.png",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.viewHistory",
+        "category": "Knox",
+        "title": "View History",
+        "icon": "media/history.png",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.viewRestore",
+        "category": "Knox",
+        "title": "View Checkpoints",
+        "icon": "media/restore.png",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.viewLogs",
+        "category": "Knox",
+        "title": "View Logs",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.navigateTo",
+        "category": "Knox",
+        "title": "Navigate to a Path",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.writeCommentsForCode",
+        "category": "Knox",
+        "title": "Write Comments",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.writeDocstringForCode",
+        "category": "Knox",
+        "title": "Write Docstring",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.fixCode",
+        "category": "Knox",
+        "title": "Fix Code",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.optimizeCode",
+        "category": "Knox",
+        "title": "Optimize Code",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.fixGrammar",
+        "category": "Knox",
+        "title": "Fix Grammar / Spelling",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.focusKnoxInput",
+        "category": "Knox",
+        "title": "Focus Chat",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.toggleAgentMode",
+        "category": "Knox",
+        "title": "Toggle Assistant Mode",
+        "group": "Knox",
+        "icon": "media/agent.png"
+      },
+      {
+        "command": "knox.toggleAgentModeCommand",
+        "category": "Knox",
+        "title": "Toggle Enterprise Assistant Mode",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.undoLastOperation",
+        "category": "Knox",
+        "title": "Undo Last Assistant Operation",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.chatoLastOperation",
+        "category": "Knox",
+        "title": "Redo Last Undone Assistant Operation",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkDiagnostics",
+        "category": "Knox",
+        "title": "Check Code Issues",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.fixDiagnostics",
+        "category": "Knox",
+        "title": "Fix Code Issues",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.checkpoints.create",
+        "category": "Knox",
+        "title": "Create Checkpoint",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.checkpoints.list",
+        "category": "Knox",
+        "title": "Show Checkpoints",
+        "group": "Knox"
+      },
+      {
+        "command": "knoxchat.checkpoints.restore",
+        "category": "Knox",
+        "title": "Restore Checkpoint",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.showConfiguration",
+        "category": "Knox Checkpoint",
+        "title": "Show Configuration",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.createKnoxIgnore",
+        "category": "Knox Checkpoint",
+        "title": "Create .knoxignore",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.configureScanDepth",
+        "category": "Knox Checkpoint",
+        "title": "Configure Scan Depth",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.configureMaxFileSize",
+        "category": "Knox Checkpoint",
+        "title": "Configure Max File Size",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.showMetrics",
+        "category": "Knox Checkpoint",
+        "title": "Show Performance Metrics",
+        "group": "Knox"
+      },
+      {
+        "command": "knox.checkpoint.resetConfiguration",
+        "category": "Knox Checkpoint",
+        "title": "Reset Configuration",
+        "group": "Knox"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "knoxchat.focusKnoxInput",
+        "mac": "cmd+l",
+        "key": "ctrl+l"
+      },
+      {
+        "command": "knoxchat.focusKnoxInputWithoutClear",
+        "mac": "cmd+shift+l",
+        "key": "ctrl+shift+l"
+      },
+      {
+        "command": "knoxchat.acceptDiff",
+        "mac": "shift+cmd+enter",
+        "key": "shift+ctrl+enter",
+        "when": "knoxchat.diffVisible"
+      },
+      {
+        "command": "knoxchat.rejectDiff",
+        "mac": "shift+cmd+backspace",
+        "key": "shift+ctrl+backspace",
+        "when": "knoxchat.diffVisible"
+      },
+      {
+        "command": "knoxchat.rejectDiff",
+        "mac": "cmd+z",
+        "key": "ctrl+z",
+        "when": "knoxchat.diffVisible"
+      },
+      {
+        "command": "knoxchat.quickEditHistoryUp",
+        "mac": "up",
+        "key": "up",
+        "when": "false && knoxchat.quickEditHistoryFocused"
+      },
+      {
+        "command": "knoxchat.quickEditHistoryDown",
+        "mac": "down",
+        "key": "down",
+        "when": "false && knoxchat.quickEditHistoryFocused"
+      },
+      {
+        "command": "knoxchat.acceptVerticalDiffBlock",
+        "mac": "alt+cmd+y",
+        "key": "alt+ctrl+y"
+      },
+      {
+        "command": "knoxchat.rejectVerticalDiffBlock",
+        "mac": "alt+cmd+n",
+        "key": "alt+ctrl+n"
+      },
+      {
+        "command": "knoxchat.focusEdit",
+        "title": "Edit code with natural language",
+        "mac": "cmd+i",
+        "key": "ctrl+i"
+      },
+      {
+        "command": "knoxchat.focusEditWithoutClear",
+        "mac": "cmd+shift+i",
+        "key": "ctrl+shift+i"
+      },
+      {
+        "command": "knoxchat.exitEditMode",
+        "mac": "escape",
+        "key": "escape",
+        "when": "knoxchat.inEditMode && editorFocus"
+      },
+      {
+        "command": "knoxchat.debugTerminal",
+        "mac": "cmd+shift+r",
+        "key": "ctrl+shift+r"
+      },
+      {
+        "command": "knoxchat.toggleTabAutocompleteEnabled",
+        "mac": "cmd+k cmd+a",
+        "key": "ctrl+k ctrl+a",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "knoxchat.applyCodeFromChat",
+        "mac": "alt+a",
+        "key": "alt+a"
+      },
+      {
+        "command": "knox.toggleAgentModeCommand",
+        "key": "ctrl+shift+alt+a",
+        "mac": "cmd+shift+alt+a"
+      },
+      {
+        "command": "knox.undoLastOperation",
+        "key": "ctrl+shift+alt+z",
+        "mac": "cmd+shift+alt+z",
+        "when": "knoxAgentModeActive"
+      },
+      {
+        "command": "knox.chatoLastOperation",
+        "key": "ctrl+shift+alt+y",
+        "mac": "cmd+shift+alt+y",
+        "when": "knoxAgentModeActive"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "knoxchat.knoxSubMenu",
+        "label": "Knox"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "knoxchat.focusKnoxInput"
+        },
+        {
+          "command": "knoxchat.focusKnoxInputWithoutClear"
+        },
+        {
+          "command": "knoxchat.debugTerminal"
+        },
+        {
+          "command": "knoxchat.newSession"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "knoxchat.knoxSubMenu",
+          "group": "0_aknox"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "knoxchat.rejectDiff",
+          "group": "Knox",
+          "when": "knoxchat.streamingDiff"
+        }
+      ],
+      "knoxchat.knoxSubMenu": [
+        {
+          "command": "knoxchat.focusKnoxInputWithoutClear",
+          "group": "Knox",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "knoxchat.writeCommentsForCode",
+          "group": "Knox",
+          "when": "editorHasSelection && !editorReadonly"
+        },
+        {
+          "command": "knoxchat.writeDocstringForCode",
+          "group": "Knox",
+          "when": "editorHasSelection && !editorReadonly"
+        },
+        {
+          "command": "knoxchat.fixCode",
+          "group": "Knox",
+          "when": "editorHasSelection && !editorReadonly"
+        },
+        {
+          "command": "knoxchat.optimizeCode",
+          "group": "Knox",
+          "when": "editorHasSelection && !editorReadonly"
+        },
+        {
+          "command": "knoxchat.fixGrammar",
+          "group": "Knox",
+          "when": "editorHasSelection && editorLangId == 'markdown' && !editorReadonly"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "knoxchat.selectFilesAsContext",
+          "group": "1_debug@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "knoxchat.newSession",
+          "group": "navigation@1",
+          "when": "view == knoxchat.knoxGUIView"
+        },
+        {
+          "command": "knoxchat.viewHistory",
+          "group": "navigation@2",
+          "when": "view == knoxchat.knoxGUIView"
+        },
+        {
+          "command": "knoxchat.viewRestore",
+          "group": "navigation@3",
+          "when": "view == knoxchat.knoxGUIView"
+        },
+        {
+          "command": "knoxchat.openConfigPage",
+          "group": "navigation@4",
+          "when": "view == knoxchat.knoxGUIView"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "knoxchat.newSession",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId == knoxchat.knoxGUIView"
+        },
+        {
+          "command": "knoxchat.viewHistory",
+          "group": "navigation@2",
+          "when": "activeWebviewPanelId == knoxchat.knoxGUIView"
+        },
+        {
+          "command": "knoxchat.viewRestore",
+          "group": "navigation@3",
+          "when": "activeWebviewPanelId == knoxchat.knoxGUIView"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "knoxchat.debugTerminal",
+          "group": "navigation@top"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "knoxchat",
+          "title": "Knox",
+          "icon": "media/sidebar-icon.png"
+        }
+      ]
+    },
+    "views": {
+      "knoxchat": [
+        {
+          "type": "webview",
+          "id": "knoxchat.knoxGUIView",
+          "name": "Knox",
+          "icon": "media/sidebar-icon.png",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.knox*/config.json",
+        "url": "./config_schema.json"
+      },
+      {
+        "fileMatch": ".knoxrc.json",
+        "url": "./knox_rc_schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "esbuild-base": "node scripts/esbuild.js",
+    "vscode:prepublish": "npm run build:checkpoints && npm run esbuild-base -- --minify",
+    "esbuild": "npm run build:checkpoints && npm run esbuild-base -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
+    "esbuild-notify": "npm run esbuild-base -- --sourcemap --notify",
+    "esbuild:visualize": "esbuild-visualizer --metadata ./build/meta.json --filename ./build/stats.html --open",
+    "tsc": "tsc -p ./",
+    "tsc:check": "tsc -p ./ --noEmit",
+    "tsc-watch": "tsc -watch -p ./",
+    "rebuild": "electron-rebuild -v 19.1.8 node-pty",
+    "build-test": "npm run esbuild && node esbuild.test.mjs",
+    "test": "npm run build-test && node ./out/runTestOnVSCodeHost.js",
+    "quick-test": "npm run build-test && node ./out/runTestOnVSCodeHost.js",
+    "prepackage": "node scripts/prepackage.js",
+    "package": "node scripts/package.js",
+    "package-all": "node scripts/package-all.js",
+    "package:pre-release": "node scripts/package.js --pre-release",
+    "build:checkpoints": "node scripts/build-checkpoints-safe.js",
+    "prebuild": "npm run build:checkpoints"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@nestjs/common": "^11.0.12",
+    "@openapitools/openapi-generator-cli": "^2.18.4",
+    "@types/chai": "^5.2.1",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/follow-redirects": "^1.14.4",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.1.0",
+    "@types/react-dom": "^18.3.5",
+    "@types/request": "^2.48.12",
+    "@types/vscode": "1.84.2",
+    "@types/ws": "^8.18.1",
+    "@vscode/vsce": "^3.3.2",
+    "cargo-cp-artifact": "^0.1.9",
+    "chai": "^5.2.0",
+    "esbuild": "0.25.10",
+    "esbuild-visualizer": "^0.6.0",
+    "glob": "^8.0.3",
+    "json-schema-to-typescript": "^12.0.0",
+    "mocha": "^10.4.0",
+    "ovsx": "^0.8.3",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.8.2",
+    "vite": "^7.0.6",
+    "vsce": "^2.15.0",
+    "vscode-extension-tester": "^8.13.0"
+  },
+  "dependencies": {
+    "@electron/rebuild": "^3.2.10",
+    "@reduxjs/toolkit": "^1.9.3",
+    "@types/node-fetch": "^2.6.12",
+    "@types/uuid": "^9.0.8",
+    "@vscode/ripgrep": "^1.15.9",
+    "@vscode/test-electron": "^2.3.9",
+    "axios": "^1.2.5",
+    "core": "file:../../core",
+    "cors": "^2.8.5",
+    "dbinfoz": "^0.14.0",
+    "diff": "^7.0.0",
+    "downshift": "^7.6.0",
+    "esbuild": "0.25.10",
+    "express": "^4.18.2",
+    "fkill": "^8.1.0",
+    "follow-redirects": "^1.15.4",
+    "handlebars": "^4.7.8",
+    "highlight.js": "^11.7.0",
+    "highlightable": "^1.3.0-beta.0",
+    "http-proxy": "^1.18.1",
+    "http-proxy-agent": "^7.0.0",
+    "http-proxy-middleware": "^3.0.5",
+    "https-proxy-agent": "^7.0.2",
+    "ignore": "^5.3.0",
+    "jsdom": "^24.0.0",
+    "knoxdev-knox-fetch": "file:../../knoxdev-package/fetch",
+    "lru-cache": "^11.0.2",
+    "minisearch": "^7.0.0",
+    "monaco-vscode-textmate-theme-converter": "^0.1.7",
+    "ncp": "^2.0.0",
+    "node-fetch": "^3.3.2",
+    "node-machine-id": "^1.1.12",
+    "react-markdown": "^8.0.7",
+    "react-redux": "^8.0.5",
+    "read-last-lines": "^1.8.0",
+    "request": "^2.88.2",
+    "socket.io-client": "^4.7.2",
+    "sqlite3": "^5.1.7",
+    "strip-ansi": "^7.1.0",
+    "svg-builder": "^2.0.0",
+    "systeminformation": "^5.23.7",
+    "tailwindcss": "^3.3.2",
+    "undici": "^6.2.0",
+    "uuid": "^9.0.1",
+    "uuidv4": "^6.2.13",
+    "vscode-languageclient": "^8.0.2",
+    "ws": "^8.13.0",
+    "yarn": "^1.22.21"
+  }
+}

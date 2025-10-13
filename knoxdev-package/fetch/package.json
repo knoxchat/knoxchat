@@ -1,0 +1,27 @@
+{
+  "name": "knoxdev-knox-fetch",
+  "version": "2.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc"
+  },
+  "author": "Knoxdev",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "knoxdev-knox-config-types": "file:../config-types",
+    "follow-redirects": "^1.15.11",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/follow-redirects": "^1.14.4",
+    "@types/node": "^24.3.0",
+    "jest": "^30.1.1",
+    "typescript": "^5.9.2"
+  }
+}
