@@ -5,7 +5,7 @@
   "version": "0.7.6",
   "repository": {
     "type": "git",
-    "url": "https://github.com/knoxchat/knox"
+    "url": "https://github.com/knoxchat/knoxchat"
   },
   "extensionKind": [
     "ui",
@@ -16,7 +16,7 @@
     "email": "edal@live.cn"
   },
   "homepage": "https://knox.chat",
-  "qna": "https://github.com/knoxchat/knox/issues/new/choose",
+  "qna": "https://github.com/knoxchat/knoxchat/issues/new/choose",
   "license": "MIT",
   "displayName": "Knox: AI-Powered Precision. Agent-Driven Results.",
   "pricing": "Free",
