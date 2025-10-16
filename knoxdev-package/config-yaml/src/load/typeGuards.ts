@@ -4,7 +4,7 @@ import { blockItemWrapperSchema } from "../schemas/index.js";
 export const isBlockItemWrapper = (
   block: unknown,
 ): block is z.infer<
-  ReturnType<typeof blockItemWrapperSchema<z.AnyZodObject>>
+  ReturnType<typeof blockItemWrapperSchema<z.ZodObject<any>>>
 > => {
   const baseSchema = z.object({});
   const schema = blockItemWrapperSchema(baseSchema);

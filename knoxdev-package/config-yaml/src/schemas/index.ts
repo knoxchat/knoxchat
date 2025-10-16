@@ -12,7 +12,7 @@ const mcpServerSchema = z.object({
   command: z.string(),
   faviconUrl: z.string().optional(),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 });
 
 const promptSchema = z.object({
@@ -22,14 +22,14 @@ const promptSchema = z.object({
 });
 
 
-export const blockItemWrapperSchema = <T extends z.AnyZodObject>(schema: T) =>
+export const blockItemWrapperSchema = <T extends z.ZodObject<any>>(schema: T) =>
   z.object({
     uses: z.string(),
-    with: z.record(z.string()).optional(),
+    with: z.record(z.string(), z.string()).optional(),
     override: schema.partial().optional(),
   });
 
-export const blockOrSchema = <T extends z.AnyZodObject>(schema: T) =>
+export const blockOrSchema = <T extends z.ZodObject<any>>(schema: T) =>
   z.union([schema, blockItemWrapperSchema(schema)]);
 
 export const baseConfigYamlSchema = z.object({
@@ -45,7 +45,7 @@ export const configYamlSchema = baseConfigYamlSchema.extend({
         modelSchema,
         z.object({
           uses: z.string(),
-          with: z.record(z.string()).optional(),
+          with: z.record(z.string(), z.string()).optional(),
           override: partialModelSchema.optional(),
         }),
       ]),
@@ -60,7 +60,7 @@ export const configYamlSchema = baseConfigYamlSchema.extend({
         z.string(),
         z.object({
           uses: z.string(),
-          with: z.record(z.string()).optional(),
+          with: z.record(z.string(), z.string()).optional(),
         }),
       ]),
     )

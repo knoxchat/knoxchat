@@ -3,10 +3,10 @@ import { fetchwithRequestOptions } from "knoxdev-knox-fetch";
 import fetch from "node-fetch";
 import {
   ChatCompletionChunk,
+  ChatCompletion,
   CompletionUsage,
   Model,
 } from "openai/resources/index";
-import { ChatCompletion } from "openai/src/resources/index.js";
 
 export function chatChunk(options: {
   content: string | null | undefined;

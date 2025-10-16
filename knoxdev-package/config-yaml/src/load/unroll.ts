@@ -28,8 +28,8 @@ export function parseConfigYaml(configYaml: string): ConfigYaml {
       return result.data;
     }
     throw new Error(
-      result.error.errors
-        .map((e) => `${e.path.join(".")}: ${e.message}`)
+      result.error.issues
+        .map((e: any) => `${e.path.join(".")}: ${e.message}`)
         .join(""),
     );
   } catch (e) {
@@ -340,7 +340,7 @@ export async function unrollBlocks(
 
 export async function resolveBlock(
   fullSlug: FullSlug,
-  inputs: Record<string, string> | undefined,
+  inputs: Record<string, string | unknown> | undefined,
   registry: Registry,
 ): Promise<AssistantUnrolled> {
   // Retrieve block raw yaml
@@ -365,13 +365,14 @@ export async function resolveBlock(
 }
 
 function inputsToFQSNs(
-  inputs: Record<string, string>,
+  inputs: Record<string, string | unknown>,
   blockSlug: PackageSlug,
 ): Record<string, string> {
   const renderedInputs: Record<string, string> = {};
   for (const [key, value] of Object.entries(inputs)) {
-    renderedInputs[key] = renderTemplateData(value, {
-      secrets: extractFQSNMap(value, [blockSlug]),
+    const stringValue = typeof value === 'string' ? value : String(value);
+    renderedInputs[key] = renderTemplateData(stringValue, {
+      secrets: extractFQSNMap(stringValue, [blockSlug]),
     });
   }
   return renderedInputs;

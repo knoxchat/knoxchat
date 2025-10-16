@@ -29,7 +29,7 @@ export class OpenAIApi implements BaseLlmApi {
     this.openai = new OpenAI({
       apiKey: config.apiKey,
       baseURL: this.apiBase,
-      fetch: customFetch(config.requestOptions),
+      fetch: customFetch(config.requestOptions) as any,
     });
   }
 
