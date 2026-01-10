@@ -12,10 +12,10 @@
   "author": "Knoxdev",
   "license": "Apache-2.0",
   "devDependencies": {
-    "@types/node": "^24.7.2",
+    "@types/node": "^25.0.5",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "zod": "^4.1.12"
+    "zod": "^4.3.5"
   }
 }
