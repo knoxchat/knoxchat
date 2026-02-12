@@ -1,0 +1,35 @@
+# Add these dependencies to your Cargo.toml file in core/checkpoints/
+
+[dependencies]
+# Tree-sitter for AST parsing
+tree-sitter = "0.25.10"
+
+# Language-specific tree-sitter parsers
+# Note: May need to adjust versions based on compatibility
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0" 
+tree-sitter-rust = "0.24.0"
+tree-sitter-python = "0.25.0"
+
+# Already have these, but ensure versions match:
+parking_lot = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = []
+# Enable tree-sitter support
+tree-sitter = [
+    "dep:tree-sitter",
+    "dep:tree-sitter-typescript",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python"
+]
+
+# To use, run:
+# cargo build --features tree-sitter
+# or add to default features:
+# default = ["tree-sitter"]
+
