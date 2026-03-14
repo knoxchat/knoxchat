@@ -14,14 +14,14 @@
   "dependencies": {
     "knoxdev-knox-config-types": "file:../config-types",
     "follow-redirects": "^1.15.11",
-    "http-proxy-agent": "^7.0.2",
-    "https-proxy-agent": "^7.0.6",
+    "http-proxy-agent": "^8.0.0",
+    "https-proxy-agent": "^8.0.0",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/follow-redirects": "^1.14.4",
-    "@types/node": "^25.0.5",
-    "jest": "^30.2.0",
+    "@types/node": "^25.5.0",
+    "jest": "^30.3.0",
     "typescript": "^5.9.3"
   }
 }

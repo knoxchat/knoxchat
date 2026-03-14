@@ -16,7 +16,7 @@ export function constructLlmApi(config) {
         case "anthropic":
             return new AnthropicApi(config);
         case "knoxchat":
-            return openAICompatible("https://knox.chat/v1/", config);
+            return openAICompatible("https://api.knox.chat/v1/", config);
         case "mock":
             return new MockApi();
         default:
