@@ -6,21 +6,16 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "build": "tsc"
   },
   "author": "Knoxdev",
   "license": "Apache-2.0",
   "dependencies": {
     "knoxdev-knox-config-types": "file:../config-types",
-    "yaml": "^2.8.2",
+    "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
-    "cross-env": "^10.1.0",
-    "jest": "^30.3.0",
-    "ts-jest": "^29.4.6",
-    "ts-node": "^10.9.2"
+    "@types/node": "^25.5.0"
   }
 }
