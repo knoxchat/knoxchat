@@ -3,32 +3,142 @@
 use super::types::*;
 use crate::error::Result;
 use crate::types::FileChange;
-use std::cell::RefCell;
+use lru::LruCache;
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+const DEFAULT_CACHE_CAP: usize = 256;
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 300;
+
+#[derive(Debug, Default)]
+struct RelationshipCacheMetrics {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+    cleanup_runs: AtomicU64,
+    entries_cleared: AtomicU64,
+}
+
+impl RelationshipCacheMetrics {
+    fn record_hit(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_eviction(&self) {
+        self.evictions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_cleanup(&self, cleared_entries: u64) {
+        self.cleanup_runs.fetch_add(1, Ordering::Relaxed);
+        self.entries_cleared
+            .fetch_add(cleared_entries, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self, current_size: usize, capacity: usize) -> CacheStatistics {
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        let lookups = hits + misses;
+
+        CacheStatistics {
+            hits,
+            misses,
+            hit_rate: if lookups == 0 {
+                0.0
+            } else {
+                hits as f64 / lookups as f64
+            },
+            evictions: self.evictions.load(Ordering::Relaxed),
+            cleanup_runs: self.cleanup_runs.load(Ordering::Relaxed),
+            entries_cleared: self.entries_cleared.load(Ordering::Relaxed),
+            current_size,
+            capacity,
+        }
+    }
+}
 
 /// Maps relationships and dependencies between code entities
 pub struct RelationshipMapper {
-    // Caches for performance (using RefCell for interior mutability)
-    call_graph_cache: RefCell<HashMap<String, Vec<CallChain>>>,
+    // LRU cache for call graph results
+    call_graph_cache: Arc<Mutex<LruCache<String, Vec<CallChain>>>>,
+    cache_metrics: Arc<RelationshipCacheMetrics>,
+    cache_cleanup_stop: Arc<AtomicBool>,
 }
 
 impl RelationshipMapper {
     pub fn new() -> Self {
+        let call_graph_cache = Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CACHE_CAP).unwrap(),
+        )));
+        let cache_metrics = Arc::new(RelationshipCacheMetrics::default());
+        let cache_cleanup_stop = Arc::new(AtomicBool::new(false));
+
+        Self::start_cache_cleanup_task(
+            call_graph_cache.clone(),
+            cache_metrics.clone(),
+            cache_cleanup_stop.clone(),
+        );
+
         Self {
-            call_graph_cache: RefCell::new(HashMap::new()),
+            call_graph_cache,
+            cache_metrics,
+            cache_cleanup_stop,
         }
+    }
+
+    fn start_cache_cleanup_task(
+        cache: Arc<Mutex<LruCache<String, Vec<CallChain>>>>,
+        metrics: Arc<RelationshipCacheMetrics>,
+        stop_signal: Arc<AtomicBool>,
+    ) {
+        thread::spawn(move || {
+            while !stop_signal.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
+
+                if stop_signal.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let cleared = {
+                    let mut cache = cache.lock();
+                    let cleared = cache.len() as u64;
+                    cache.clear();
+                    cleared
+                };
+
+                if cleared > 0 {
+                    metrics.record_cleanup(cleared);
+                }
+            }
+        });
     }
 
     /// Clear the call graph cache
     pub fn clear_cache(&self) {
-        self.call_graph_cache.borrow_mut().clear();
+        let cleared = {
+            let mut cache = self.call_graph_cache.lock();
+            let cleared = cache.len() as u64;
+            cache.clear();
+            cleared
+        };
+        if cleared > 0 {
+            self.cache_metrics.record_cleanup(cleared);
+        }
     }
 
     /// Remove cached call chains for a specific file
     pub fn invalidate_file_cache(&self, file_path: &Path) {
         let file_key = file_path.to_string_lossy().to_string();
-        self.call_graph_cache.borrow_mut().remove(&file_key);
+        self.call_graph_cache.lock().pop(&file_key);
     }
 
     /// Build call chains from AST
@@ -40,9 +150,12 @@ impl RelationshipMapper {
         let file_key = file_path.to_string_lossy().to_string();
 
         // Check cache first
-        if let Some(cached_chains) = self.call_graph_cache.borrow().get(&file_key) {
+        if let Some(cached_chains) = self.call_graph_cache.lock().get(&file_key) {
+            self.cache_metrics.record_hit();
             return Ok(cached_chains.clone());
         }
+
+        self.cache_metrics.record_miss();
 
         let mut call_chains = Vec::new();
 
@@ -50,11 +163,18 @@ impl RelationshipMapper {
         self.find_call_expressions(&ast.root, file_path, &mut call_chains)?;
 
         // Cache the results
-        self.call_graph_cache
-            .borrow_mut()
-            .insert(file_key, call_chains.clone());
+        let mut cache = self.call_graph_cache.lock();
+        if cache.len() == DEFAULT_CACHE_CAP {
+            self.cache_metrics.record_eviction();
+        }
+        cache.put(file_key, call_chains.clone());
 
         Ok(call_chains)
+    }
+
+    pub fn get_cache_statistics(&self) -> CacheStatistics {
+        self.cache_metrics
+            .snapshot(self.call_graph_cache.lock().len(), DEFAULT_CACHE_CAP)
     }
 
     /// Build inheritance tree from class definitions
@@ -472,6 +592,24 @@ impl RelationshipMapper {
         recursion_stack.remove(node_id);
         current_path.pop();
     }
+}
+
+impl Drop for RelationshipMapper {
+    fn drop(&mut self) {
+        self.cache_cleanup_stop.store(true, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheStatistics {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub evictions: u64,
+    pub cleanup_runs: u64,
+    pub entries_cleared: u64,
+    pub current_size: usize,
+    pub capacity: usize,
 }
 
 impl Default for RelationshipMapper {

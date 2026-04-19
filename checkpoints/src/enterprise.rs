@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 /// Enterprise configuration with advanced policies
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct EnterpriseConfig {
     /// Basic checkpoint configuration
     pub base_config: CheckpointConfig,
@@ -189,6 +190,7 @@ pub struct PerformanceConfig {
 
 /// Integration configuration for external systems
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct IntegrationConfig {
     /// Git integration settings
     pub git_integration: GitIntegration,
@@ -227,6 +229,7 @@ pub struct GitIntegration {
 
 /// CI/CD integration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CiCdIntegration {
     /// Enable CI/CD integration
     pub enabled: bool,
@@ -301,6 +304,7 @@ pub enum StorageProviderType {
 
 /// Notification configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct NotificationConfig {
     /// Enable notifications
     pub enabled: bool,
@@ -351,18 +355,6 @@ pub enum NotificationEvent {
     MaintenanceRequired,
 }
 
-impl Default for EnterpriseConfig {
-    fn default() -> Self {
-        Self {
-            base_config: CheckpointConfig::default(),
-            backup_policy: BackupPolicy::default(),
-            security_policy: SecurityPolicy::default(),
-            monitoring_config: MonitoringConfig::default(),
-            performance_config: PerformanceConfig::default(),
-            integration_config: IntegrationConfig::default(),
-        }
-    }
-}
 
 impl Default for BackupPolicy {
     fn default() -> Self {
@@ -437,16 +429,6 @@ impl Default for PerformanceConfig {
     }
 }
 
-impl Default for IntegrationConfig {
-    fn default() -> Self {
-        Self {
-            git_integration: GitIntegration::default(),
-            cicd_integration: CiCdIntegration::default(),
-            external_storage: ExternalStorageConfig::default(),
-            notifications: NotificationConfig::default(),
-        }
-    }
-}
 
 impl Default for GitIntegration {
     fn default() -> Self {
@@ -461,17 +443,6 @@ impl Default for GitIntegration {
     }
 }
 
-impl Default for CiCdIntegration {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            platforms: Vec::new(),
-            checkpoint_on_build: false,
-            checkpoint_on_deploy: false,
-            webhook_endpoints: Vec::new(),
-        }
-    }
-}
 
 impl Default for ExternalStorageConfig {
     fn default() -> Self {
@@ -484,15 +455,6 @@ impl Default for ExternalStorageConfig {
     }
 }
 
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            channels: Vec::new(),
-            events: Vec::new(),
-        }
-    }
-}
 
 /// Enterprise checkpoint manager with advanced features
 pub struct EnterpriseCheckpointManager {

@@ -17,6 +17,13 @@ pub mod storage;
 pub mod types;
 pub mod utils;
 
+// Phase 8 modules
+pub mod analysis;
+pub mod branching;
+pub mod collaborative;
+pub mod incremental;
+pub mod monitoring;
+
 // Re-exports for convenience
 pub use changeset_tracker::{ChangesetTracker, OperationMode};
 pub use config::CheckpointConfig;
@@ -28,6 +35,16 @@ pub use restoration::CheckpointRestoration;
 pub use semantic::{types::*, SemanticAnalyzer};
 pub use storage::CheckpointStorage;
 pub use types::*;
+
+// Phase 8 re-exports
+pub use analysis::CheckpointAnalyzer;
+pub use branching::BranchManager;
+pub use collaborative::CollaborativeManager;
+pub use incremental::IncrementalCheckpointManager;
+pub use monitoring::PerformanceMonitor;
+
+#[cfg(test)]
+mod implementation_plan_tests;
 
 use neon::prelude::*;
 use once_cell::sync::OnceCell;
@@ -304,6 +321,90 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function(
         "getChangesetStats",
         crate::bindings_simple::get_changeset_stats,
+    )?;
+
+    // Semantic analysis
+    cx.export_function(
+        "analyzeSemantics",
+        crate::bindings_simple::analyze_semantics,
+    )?;
+
+    // Phase 8.1: Incremental Checkpointing
+    cx.export_function(
+        "createIncrementalCheckpoint",
+        crate::bindings_simple::create_incremental_checkpoint,
+    )?;
+    cx.export_function(
+        "reconstructCheckpoint",
+        crate::bindings_simple::reconstruct_checkpoint,
+    )?;
+
+    // Phase 8.2: Branch Management
+    cx.export_function(
+        "createBranch",
+        crate::bindings_simple::create_branch,
+    )?;
+    cx.export_function(
+        "listBranches",
+        crate::bindings_simple::list_branches,
+    )?;
+    cx.export_function(
+        "switchBranch",
+        crate::bindings_simple::switch_branch,
+    )?;
+    cx.export_function(
+        "deleteBranch",
+        crate::bindings_simple::delete_branch,
+    )?;
+    cx.export_function(
+        "mergeBranches",
+        crate::bindings_simple::merge_branches,
+    )?;
+
+    // Phase 8.3: AI-Powered Analysis
+    cx.export_function(
+        "analyzeCheckpoint",
+        crate::bindings_simple::analyze_checkpoint,
+    )?;
+    cx.export_function(
+        "suggestCheckpointGroups",
+        crate::bindings_simple::suggest_checkpoint_groups,
+    )?;
+
+    // Phase 8.4: Collaborative Checkpoints
+    cx.export_function(
+        "shareCheckpoints",
+        crate::bindings_simple::share_checkpoints,
+    )?;
+    cx.export_function(
+        "listSharedBundles",
+        crate::bindings_simple::list_shared_bundles,
+    )?;
+    cx.export_function(
+        "getAuditTrail",
+        crate::bindings_simple::get_audit_trail,
+    )?;
+
+    // Phase 8.5: Performance Monitoring
+    cx.export_function(
+        "getPerformanceDashboard",
+        crate::bindings_simple::get_performance_dashboard,
+    )?;
+    cx.export_function(
+        "getStorageUsage",
+        crate::bindings_simple::get_storage_usage,
+    )?;
+    cx.export_function(
+        "recordStorageSnapshot",
+        crate::bindings_simple::record_storage_snapshot,
+    )?;
+    cx.export_function(
+        "recordRestorationEvent",
+        crate::bindings_simple::record_restoration_event,
+    )?;
+    cx.export_function(
+        "recordAISessionMetrics",
+        crate::bindings_simple::record_ai_session_metrics,
     )?;
 
     Ok(())

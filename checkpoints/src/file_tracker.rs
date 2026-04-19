@@ -73,7 +73,7 @@ impl FileTracker {
             } else if path.is_file() {
                 files_scanned += 1;
 
-                if let Some(relative_path) = path.strip_prefix(&self.workspace_path).ok() {
+                if let Ok(relative_path) = path.strip_prefix(&self.workspace_path) {
                     // Check file size limit before processing
                     if let Ok(metadata) = fs::metadata(path) {
                         if metadata.len() > self.config.max_file_size_bytes {
@@ -211,12 +211,8 @@ impl FileTracker {
         let full_path = self.workspace_path.join(&file_path);
 
         let (original_content, original_hash, _original_size) = if let Some(state) = prev_state {
-            let content = if change_type != ChangeType::Deleted {
-                None // Don't read content for non-deleted files in prev state
-            } else {
-                None // We don't have the content for deleted files
-            };
-            (content, Some(state.hash.clone()), Some(state.size))
+            // We don't store previous content - for both deleted and non-deleted files
+            (None, Some(state.hash.clone()), Some(state.size))
         } else {
             (None, None, None)
         };
@@ -333,7 +329,7 @@ impl FileTracker {
 
         // Add custom ignore patterns
         for pattern in &self.config.global_ignore_patterns {
-            builder.add_ignore(&format!("**/{}", pattern));
+            builder.add_ignore(format!("**/{}", pattern));
         }
 
         // Respect .gitignore and .knoxignore files
@@ -363,7 +359,7 @@ impl FileTracker {
             let path = entry.path();
 
             if path.is_file() {
-                if let Some(relative_path) = path.strip_prefix(&self.workspace_path).ok() {
+                if let Ok(relative_path) = path.strip_prefix(&self.workspace_path) {
                     let path_str = relative_path.to_string_lossy();
 
                     for pattern in patterns {
@@ -406,9 +402,24 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         let parts: Vec<&str> = pattern.split("**").collect();
         if parts.len() == 2 {
             let prefix = parts[0];
-            let suffix = parts[1];
+            let suffix = parts[1].trim_start_matches('/');
 
-            return text.starts_with(prefix) && text.ends_with(suffix);
+            if !text.starts_with(prefix) {
+                return false;
+            }
+            let remainder = &text[prefix.len()..];
+            // suffix might contain a single * glob
+            if suffix.is_empty() {
+                return true;
+            }
+            return glob_match(suffix, remainder)
+                || remainder
+                    .split('/')
+                    .any(|part| glob_match(suffix, part))
+                || remainder
+                    .find('/')
+                    .map(|i| glob_match(suffix, &remainder[i + 1..]))
+                    .unwrap_or(false);
         }
     }
 
@@ -473,7 +484,7 @@ mod tests {
         let changes = tracker.detect_changes().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].change_type, ChangeType::Modified);
-        assert_eq!(changes[0].file_path, PathBuf::from("test.txt"));
+        assert_eq!(changes[0].path, PathBuf::from("test.txt"));
     }
 
     #[test]
@@ -492,7 +503,7 @@ mod tests {
         let changes = tracker.detect_changes().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].change_type, ChangeType::Created);
-        assert_eq!(changes[0].file_path, PathBuf::from("new_file.txt"));
+        assert_eq!(changes[0].path, PathBuf::from("new_file.txt"));
     }
 
     #[test]
@@ -514,7 +525,7 @@ mod tests {
         let changes = tracker.detect_changes().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].change_type, ChangeType::Deleted);
-        assert_eq!(changes[0].file_path, PathBuf::from("test.txt"));
+        assert_eq!(changes[0].path, PathBuf::from("test.txt"));
     }
 
     #[test]

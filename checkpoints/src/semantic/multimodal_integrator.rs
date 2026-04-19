@@ -524,7 +524,7 @@ impl MultiModalIntegrator {
 
         for file_change in file_changes {
             // Check if it's a test file
-            if self.is_test_file(&file_change.path.to_string_lossy().as_ref()) {
+            if self.is_test_file(file_change.path.to_string_lossy().as_ref()) {
                 if let Some(content) = &file_change.new_content {
                     // Extract test cases (simplified)
                     for (line_num, line) in content.lines().enumerate() {

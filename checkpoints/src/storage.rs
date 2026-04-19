@@ -27,6 +27,10 @@ pub struct CheckpointStorage {
     config: CheckpointConfig,
     content_cache: Arc<RwLock<HashMap<String, CachedContent>>>,
     dedup_index: Arc<RwLock<HashMap<String, String>>>, // content_hash -> file_path
+    /// Reference counts for content-addressable blobs: content_hash -> refcount
+    content_refcounts: Arc<RwLock<HashMap<String, u64>>>,
+    /// Tracks cumulative compression metrics for stats
+    compression_metrics: Arc<RwLock<CompressionMetrics>>,
 }
 
 /// Cached content with metadata
@@ -38,6 +42,17 @@ struct CachedContent {
     access_count: u64,
 }
 
+/// Tracks compression and deduplication metrics
+#[derive(Debug, Clone, Default)]
+struct CompressionMetrics {
+    /// Total bytes before compression across all stored content
+    total_original_bytes: u64,
+    /// Total bytes after compression across all stored content
+    total_compressed_bytes: u64,
+    /// Total bytes saved by deduplication (content that was already stored)
+    total_dedup_savings_bytes: u64,
+}
+
 impl CheckpointStorage {
     /// Create a new storage manager
     pub fn new(config: CheckpointConfig) -> Result<Self> {
@@ -45,18 +60,21 @@ impl CheckpointStorage {
             config,
             content_cache: Arc::new(RwLock::new(HashMap::new())),
             dedup_index: Arc::new(RwLock::new(HashMap::new())),
+            content_refcounts: Arc::new(RwLock::new(HashMap::new())),
+            compression_metrics: Arc::new(RwLock::new(CompressionMetrics::default())),
         };
 
         storage.initialize_storage_directories()?;
         storage.load_deduplication_index()?;
+        storage.load_refcount_index()?;
 
         Ok(storage)
     }
 
     /// Initialize storage directories
     fn initialize_storage_directories(&self) -> Result<()> {
-        fs::create_dir_all(&self.config.data_path())?;
-        fs::create_dir_all(&self.config.backup_path())?;
+        fs::create_dir_all(self.config.data_path())?;
+        fs::create_dir_all(self.config.backup_path())?;
         fs::create_dir_all(self.config.data_path().join("content"))?;
         fs::create_dir_all(self.config.data_path().join("dedup"))?;
         Ok(())
@@ -82,6 +100,31 @@ impl CheckpointStorage {
     fn save_deduplication_index(&self) -> Result<()> {
         let index_path = self.config.data_path().join("dedup_index.json");
         let index = self.dedup_index.read();
+        let content = serde_json::to_string_pretty(&*index)?;
+        fs::write(&index_path, content)?;
+        Ok(())
+    }
+
+    /// Load reference count index from disk
+    fn load_refcount_index(&self) -> Result<()> {
+        let index_path = self.config.data_path().join("refcount_index.json");
+
+        if index_path.exists() {
+            let content = fs::read_to_string(&index_path)?;
+            let index: HashMap<String, u64> = serde_json::from_str(&content).map_err(|e| {
+                CheckpointError::generic(format!("Failed to parse refcount index: {}", e))
+            })?;
+
+            *self.content_refcounts.write() = index;
+        }
+
+        Ok(())
+    }
+
+    /// Save reference count index to disk
+    fn save_refcount_index(&self) -> Result<()> {
+        let index_path = self.config.data_path().join("refcount_index.json");
+        let index = self.content_refcounts.read();
         let content = serde_json::to_string_pretty(&*index)?;
         fs::write(&index_path, content)?;
         Ok(())
@@ -147,17 +190,27 @@ impl CheckpointStorage {
         content: &[u8],
         compression: CompressionType,
     ) -> Result<()> {
-        // Check if content already exists
+        let original_size = content.len() as u64;
+
+        // Check if content already exists (dedup hit)
         {
             let dedup_index = self.dedup_index.read();
             if dedup_index.contains_key(content_hash) {
-                // Content already stored, just return
+                // Content already stored — increment refcount and record dedup savings
+                let mut refcounts = self.content_refcounts.write();
+                let count = refcounts.entry(content_hash.to_string()).or_insert(1);
+                *count += 1;
+
+                let mut metrics = self.compression_metrics.write();
+                metrics.total_dedup_savings_bytes += original_size;
+
                 return Ok(());
             }
         }
 
         // Compress content
         let compressed_content = self.compress_content(content, compression)?;
+        let compressed_size = compressed_content.len() as u64;
 
         // Store compressed content
         let content_path = self.get_content_path(content_hash);
@@ -171,6 +224,19 @@ impl CheckpointStorage {
                 content_hash.to_string(),
                 content_path.to_string_lossy().to_string(),
             );
+        }
+
+        // Initialize refcount to 1
+        {
+            let mut refcounts = self.content_refcounts.write();
+            refcounts.insert(content_hash.to_string(), 1);
+        }
+
+        // Update compression metrics
+        {
+            let mut metrics = self.compression_metrics.write();
+            metrics.total_original_bytes += original_size;
+            metrics.total_compressed_bytes += compressed_size;
         }
 
         // Cache the content
@@ -317,12 +383,88 @@ impl CheckpointStorage {
             .join(checkpoint_id.to_string());
 
         if checkpoint_dir.exists() {
-            // TODO: Implement reference counting for deduplication
-            // For now, we just remove the checkpoint directory
+            // Collect content hashes referenced by this checkpoint before removing
+            let content_hashes = self.collect_checkpoint_content_hashes(&checkpoint_dir);
+
+            // Decrement refcounts and remove unreferenced content blobs
+            for hash in &content_hashes {
+                self.release_content_ref(hash);
+            }
+
+            // Remove the checkpoint directory (metadata + hash pointer files)
             fs::remove_dir_all(&checkpoint_dir)?;
         }
 
         Ok(())
+    }
+
+    /// Collect all content hashes referenced by a checkpoint directory
+    fn collect_checkpoint_content_hashes(&self, checkpoint_dir: &Path) -> Vec<String> {
+        let mut hashes = Vec::new();
+        let mut index = 0;
+
+        loop {
+            let change_dir = checkpoint_dir.join(format!("file_{:04}", index));
+            if !change_dir.exists() {
+                break;
+            }
+
+            for hash_file in &["original_hash", "new_hash"] {
+                let hash_path = change_dir.join(hash_file);
+                if let Ok(hash) = fs::read_to_string(&hash_path) {
+                    let hash = hash.trim().to_string();
+                    if !hash.is_empty() {
+                        hashes.push(hash);
+                    }
+                }
+            }
+            index += 1;
+        }
+
+        hashes
+    }
+
+    /// Decrement refcount for a content hash; remove blob if it reaches zero
+    fn release_content_ref(&self, content_hash: &str) {
+        let should_delete = {
+            let mut refcounts = self.content_refcounts.write();
+            if let Some(count) = refcounts.get_mut(content_hash) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    refcounts.remove(content_hash);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                // No refcount tracked — legacy data; remove the blob
+                true
+            }
+        };
+
+        if should_delete {
+            // Remove from content store
+            let content_path = self.get_content_path(content_hash);
+            if content_path.exists() {
+                if let Err(e) = fs::remove_file(&content_path) {
+                    log::warn!("Failed to remove unreferenced content blob {}: {}", content_hash, e);
+                } else {
+                    log::debug!("Removed unreferenced content blob: {}", content_hash);
+                }
+            }
+
+            // Remove from dedup index
+            {
+                let mut dedup_index = self.dedup_index.write();
+                dedup_index.remove(content_hash);
+            }
+
+            // Remove from cache
+            {
+                let mut cache = self.content_cache.write();
+                cache.remove(content_hash);
+            }
+        }
     }
 
     /// Compress content using the specified algorithm
@@ -482,12 +624,73 @@ impl CheckpointStorage {
             index.len()
         };
 
+        let metrics = self.compression_metrics.read();
+        let compression_ratio = if metrics.total_original_bytes > 0 {
+            metrics.total_compressed_bytes as f64 / metrics.total_original_bytes as f64
+        } else {
+            1.0 // no data yet
+        };
+
         Ok(StorageStats {
             total_size_bytes: total_size,
             cache_size_bytes: cache_size,
             dedup_entries,
-            compression_ratio: 0.7, // Placeholder
+            compression_ratio,
+            deduplication_savings_bytes: metrics.total_dedup_savings_bytes,
         })
+    }
+
+    /// Run garbage collection: remove orphaned content blobs with zero references
+    pub fn run_gc(&self) -> Result<u64> {
+        let mut freed_bytes = 0u64;
+        let content_dir = self.config.data_path().join("content");
+
+        if !content_dir.exists() {
+            return Ok(0);
+        }
+
+        let refcounts = self.content_refcounts.read();
+        let dedup_index = self.dedup_index.read();
+
+        // Walk content directory and find blobs not in the refcount index
+        for entry in walkdir::WalkDir::new(&content_dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                // Reconstruct hash from path: content/<first2chars>/<rest>
+                if let (Some(parent), Some(filename)) = (
+                    entry.path().parent().and_then(|p| p.file_name()),
+                    entry.path().file_name(),
+                ) {
+                    let hash = format!(
+                        "{}{}",
+                        parent.to_string_lossy(),
+                        filename.to_string_lossy()
+                    );
+
+                    // If hash has zero or no refcount and is not in dedup_index, remove it
+                    let is_orphaned = !refcounts.contains_key(&hash) && !dedup_index.contains_key(&hash);
+                    if is_orphaned {
+                        if let Ok(meta) = entry.metadata() {
+                            freed_bytes += meta.len();
+                        }
+                        if let Err(e) = fs::remove_file(entry.path()) {
+                            log::warn!("GC: failed to remove orphaned blob: {}", e);
+                        } else {
+                            log::debug!("GC: removed orphaned blob {}", hash);
+                        }
+                    }
+                }
+            }
+        }
+
+        drop(refcounts);
+        drop(dedup_index);
+
+        log::info!("GC complete: freed {} bytes", freed_bytes);
+        Ok(freed_bytes)
     }
 
     /// Calculate total size of a directory
@@ -507,9 +710,10 @@ impl CheckpointStorage {
         Ok(total_size)
     }
 
-    /// Flush deduplication index to disk
+    /// Flush deduplication index and refcount index to disk
     pub fn flush(&self) -> Result<()> {
-        self.save_deduplication_index()
+        self.save_deduplication_index()?;
+        self.save_refcount_index()
     }
 }
 
@@ -520,11 +724,13 @@ pub struct StorageStats {
     pub cache_size_bytes: u64,
     pub dedup_entries: usize,
     pub compression_ratio: f64,
+    pub deduplication_savings_bytes: u64,
 }
 
 impl Drop for CheckpointStorage {
     fn drop(&mut self) {
-        // Save deduplication index on drop
+        // Save deduplication index and refcount index on drop
         let _ = self.save_deduplication_index();
+        let _ = self.save_refcount_index();
     }
 }

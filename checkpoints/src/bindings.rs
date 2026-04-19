@@ -149,6 +149,20 @@ pub fn restore_checkpoint(mut cx: FunctionContext) -> JsResult<JsObject> {
             js_result.set(&mut cx, "backupCheckpointId", backup_id_str)?;
         }
         
+        // Include conflict details so the caller can prompt user and re-invoke
+        let conflicts_array = JsArray::new(&mut cx, result.conflicts.len() as u32);
+        for (i, conflict) in result.conflicts.iter().enumerate() {
+            let conflict_obj = cx.empty_object();
+            let path_str = cx.string(conflict.file_path.to_string_lossy());
+            conflict_obj.set(&mut cx, "path", path_str)?;
+            let conflict_type = cx.string(format!("{:?}", conflict.conflict_type));
+            conflict_obj.set(&mut cx, "type", conflict_type)?;
+            let resolution = cx.string(format!("{:?}", conflict.resolution));
+            conflict_obj.set(&mut cx, "resolution", resolution)?;
+            conflicts_array.set(&mut cx, i as u32, conflict_obj)?;
+        }
+        js_result.set(&mut cx, "conflicts", conflicts_array)?;
+        
         Ok(js_result)
     })
 }
@@ -192,8 +206,8 @@ pub fn delete_checkpoint(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     
     let manager = manager.lock().unwrap();
     
-    match manager.delete_checkpoint(checkpoint_id) {
-        Ok(deleted) => Ok(cx.boolean(deleted)),
+    match manager.delete_checkpoint(&checkpoint_id) {
+        Ok(()) => Ok(cx.boolean(true)),
         Err(e) => cx.throw_error(format!("Failed to delete checkpoint: {}", e)),
     }
 }
@@ -206,6 +220,17 @@ pub fn cleanup_old_checkpoints(mut cx: FunctionContext) -> JsResult<JsNumber> {
     match manager.cleanup_old_checkpoints() {
         Ok(deleted_count) => Ok(cx.number(deleted_count as f64)),
         Err(e) => cx.throw_error(format!("Failed to cleanup checkpoints: {}", e)),
+    }
+}
+
+/// Run storage garbage collection to remove orphaned content blobs
+pub fn run_storage_gc(mut cx: FunctionContext) -> JsResult<JsNumber> {
+    let manager = get_manager(&mut cx)?;
+    let manager = manager.lock().unwrap();
+    
+    match manager.run_storage_gc() {
+        Ok(freed_bytes) => Ok(cx.number(freed_bytes as f64)),
+        Err(e) => cx.throw_error(format!("Failed to run storage GC: {}", e)),
     }
 }
 
@@ -294,12 +319,56 @@ fn parse_restore_options(cx: &mut FunctionContext, obj: Handle<JsObject>) -> Neo
     }
     
     if let Ok(show_progress) = obj.get::<JsBoolean, _, _>(cx, "showProgress") {
-        options.show_progress = show_progress.value(cx);
+        // Note: show_progress is not in RestoreOptions, used by caller
     }
     
     if let Ok(specific_files_array) = obj.get::<JsArray, _, _>(cx, "specificFiles") {
         let file_paths = parse_string_array(cx, specific_files_array)?;
-        options.specific_files = file_paths.into_iter().map(PathBuf::from).collect();
+        options.include_files = file_paths.into_iter().map(PathBuf::from).collect();
+    }
+    
+    if let Ok(conflict_resolution) = obj.get::<JsString, _, _>(cx, "conflictResolution") {
+        options.conflict_resolution = match conflict_resolution.value(cx).as_str() {
+            "skip" => ConflictResolution::Skip,
+            "overwrite" => ConflictResolution::Overwrite,
+            "backup" => ConflictResolution::Backup,
+            "prompt" => ConflictResolution::Prompt,
+            _ => ConflictResolution::Prompt,
+        };
+    }
+    
+    if let Ok(prompt_fallback) = obj.get::<JsString, _, _>(cx, "promptFallback") {
+        options.prompt_fallback = match prompt_fallback.value(cx).as_str() {
+            "skip" => ConflictResolution::Skip,
+            "overwrite" => ConflictResolution::Overwrite,
+            "backup" => ConflictResolution::Backup,
+            _ => ConflictResolution::Backup,
+        };
+    }
+    
+    if let Ok(dry_run) = obj.get::<JsBoolean, _, _>(cx, "dryRun") {
+        options.dry_run = dry_run.value(cx);
+    }
+    
+    // Parse per-file resolutions: { "path/to/file": "overwrite", ... }
+    if let Ok(per_file_obj) = obj.get::<JsObject, _, _>(cx, "perFileResolutions") {
+        if let Ok(keys) = per_file_obj.get_own_property_names(cx) {
+            let length = keys.len(cx);
+            for i in 0..length {
+                if let Ok(key) = keys.get::<JsString, _, _>(cx, i) {
+                    let file_path = PathBuf::from(key.value(cx));
+                    if let Ok(resolution_str) = per_file_obj.get::<JsString, _, _>(cx, key.value(cx).as_str()) {
+                        let resolution = match resolution_str.value(cx).as_str() {
+                            "skip" => ConflictResolution::Skip,
+                            "overwrite" => ConflictResolution::Overwrite,
+                            "backup" => ConflictResolution::Backup,
+                            _ => ConflictResolution::Skip,
+                        };
+                        options.per_file_resolutions.insert(file_path, resolution);
+                    }
+                }
+            }
+        }
     }
     
     Ok(options)

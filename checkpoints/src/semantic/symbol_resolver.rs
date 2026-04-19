@@ -6,17 +6,77 @@
 use super::knowledge_graph::{EdgeType, KnowledgeGraph, NodeType};
 use super::types::*;
 use crate::error::{CheckpointError, Result};
+use lru::LruCache;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+const RESOLUTION_CACHE_CAP: usize = 512;
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 300;
+
+#[derive(Debug, Default)]
+struct ResolutionCacheMetrics {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+    cleanup_runs: AtomicU64,
+    entries_cleared: AtomicU64,
+}
+
+impl ResolutionCacheMetrics {
+    fn record_hit(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_eviction(&self) {
+        self.evictions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_cleanup(&self, cleared_entries: u64) {
+        self.cleanup_runs.fetch_add(1, Ordering::Relaxed);
+        self.entries_cleared
+            .fetch_add(cleared_entries, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self, current_size: usize, capacity: usize) -> CacheStatistics {
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        let lookups = hits + misses;
+
+        CacheStatistics {
+            hits,
+            misses,
+            hit_rate: if lookups == 0 {
+                0.0
+            } else {
+                hits as f64 / lookups as f64
+            },
+            evictions: self.evictions.load(Ordering::Relaxed),
+            cleanup_runs: self.cleanup_runs.load(Ordering::Relaxed),
+            entries_cleared: self.entries_cleared.load(Ordering::Relaxed),
+            current_size,
+            capacity,
+        }
+    }
+}
 
 /// Symbol resolver for cross-file resolution
 pub struct SymbolResolver {
     knowledge_graph: Arc<KnowledgeGraph>,
     symbol_table: Arc<RwLock<SymbolTable>>,
     module_registry: Arc<RwLock<ModuleRegistry>>,
-    import_resolution_cache: Arc<RwLock<HashMap<String, ResolutionResult>>>,
+    import_resolution_cache: Arc<RwLock<LruCache<String, ResolutionResult>>>,
+    cache_metrics: Arc<ResolutionCacheMetrics>,
+    cache_cleanup_stop: Arc<AtomicBool>,
 }
 
 /// Global symbol table
@@ -109,12 +169,53 @@ pub struct ResolutionResult {
 impl SymbolResolver {
     /// Create a new symbol resolver
     pub fn new(knowledge_graph: Arc<KnowledgeGraph>) -> Self {
+        let import_resolution_cache = Arc::new(RwLock::new(LruCache::new(
+            NonZeroUsize::new(RESOLUTION_CACHE_CAP).unwrap(),
+        )));
+        let cache_metrics = Arc::new(ResolutionCacheMetrics::default());
+        let cache_cleanup_stop = Arc::new(AtomicBool::new(false));
+
+        Self::start_cache_cleanup_task(
+            import_resolution_cache.clone(),
+            cache_metrics.clone(),
+            cache_cleanup_stop.clone(),
+        );
+
         Self {
             knowledge_graph,
             symbol_table: Arc::new(RwLock::new(SymbolTable::new())),
             module_registry: Arc::new(RwLock::new(ModuleRegistry::new())),
-            import_resolution_cache: Arc::new(RwLock::new(HashMap::new())),
+            import_resolution_cache,
+            cache_metrics,
+            cache_cleanup_stop,
         }
+    }
+
+    fn start_cache_cleanup_task(
+        cache: Arc<RwLock<LruCache<String, ResolutionResult>>>,
+        metrics: Arc<ResolutionCacheMetrics>,
+        stop_signal: Arc<AtomicBool>,
+    ) {
+        thread::spawn(move || {
+            while !stop_signal.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
+
+                if stop_signal.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let cleared = {
+                    let mut cache = cache.write();
+                    let cleared = cache.len() as u64;
+                    cache.clear();
+                    cleared
+                };
+
+                if cleared > 0 {
+                    metrics.record_cleanup(cleared);
+                }
+            }
+        });
     }
 
     /// Register a symbol in the symbol table
@@ -136,14 +237,14 @@ impl SymbolResolver {
                     .to_string_lossy()
                     .to_string(),
             )
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entry.fully_qualified_name.clone());
 
         // Update name index
         symbol_table
             .name_index
             .entry(entry.simple_name.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entry.fully_qualified_name);
 
         Ok(())
@@ -177,9 +278,12 @@ impl SymbolResolver {
             context_scope
         );
 
-        if let Some(cached) = self.import_resolution_cache.read().get(&cache_key) {
+        if let Some(cached) = self.import_resolution_cache.write().get(&cache_key) {
+            self.cache_metrics.record_hit();
             return Ok(cached.clone());
         }
+
+        self.cache_metrics.record_miss();
 
         // Try different resolution strategies
         let result = self
@@ -189,9 +293,11 @@ impl SymbolResolver {
             .or_else(|_| self.resolve_globally(symbol_name))?;
 
         // Cache the result
-        self.import_resolution_cache
-            .write()
-            .insert(cache_key, result.clone());
+        let mut cache = self.import_resolution_cache.write();
+        if cache.len() == RESOLUTION_CACHE_CAP {
+            self.cache_metrics.record_eviction();
+        }
+        cache.put(cache_key, result.clone());
 
         Ok(result)
     }
@@ -347,13 +453,37 @@ impl SymbolResolver {
 
                 for edge in outgoing_edges {
                     if edge.edge_type == EdgeType::Calls {
+                        // Determine if the call is async by checking the callee symbol
+                        let is_async = symbol_table
+                            .symbols
+                            .get(&edge.to)
+                            .map(|s| {
+                                s.metadata
+                                    .get("is_async")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+
+                        // Extract parameters from edge metadata if available
+                        let parameters_passed = edge
+                            .metadata
+                            .get("parameters")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|p| p.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
                         call_chains.push(CallChain {
                             caller: fqn.clone(),
                             called: edge.to.clone(),
                             call_type: CallType::Direct,
                             location: symbol.definition_location.clone(),
-                            is_async: false,
-                            parameters_passed: Vec::new(),
+                            is_async,
+                            parameters_passed,
                         });
                     }
                 }
@@ -502,21 +632,36 @@ impl SymbolResolver {
     pub fn find_all_references(&self, symbol_fqn: &str) -> Vec<CodeLocation> {
         let mut references = Vec::new();
 
-        // Use knowledge graph to find all references
-        let symbol_nodes: Vec<_> = self
-            .knowledge_graph
-            .get_nodes_by_type(NodeType::Function) // Would need to check all types
-            .into_iter()
-            .filter(|node| node.name == symbol_fqn)
-            .collect();
+        // Check all node types for the symbol name
+        let all_types = [
+            NodeType::Function,
+            NodeType::Class,
+            NodeType::Interface,
+            NodeType::Type,
+            NodeType::Variable,
+            NodeType::Constant,
+            NodeType::Module,
+        ];
 
-        for node in symbol_nodes {
-            let incoming_edges = self.knowledge_graph.get_incoming_edges(&node.id);
+        for node_type in &all_types {
+            let nodes: Vec<_> = self
+                .knowledge_graph
+                .get_nodes_by_type(node_type.clone())
+                .into_iter()
+                .filter(|node| node.name == symbol_fqn)
+                .collect();
 
-            for edge in incoming_edges {
-                if edge.edge_type == EdgeType::References {
-                    if let Some(referring_node) = self.knowledge_graph.get_node(&edge.from) {
-                        references.push(referring_node.location);
+            for node in nodes {
+                let incoming_edges = self.knowledge_graph.get_incoming_edges(&node.id);
+
+                for edge in incoming_edges {
+                    if edge.edge_type == EdgeType::References
+                        || edge.edge_type == EdgeType::Calls
+                        || edge.edge_type == EdgeType::Uses
+                    {
+                        if let Some(referring_node) = self.knowledge_graph.get_node(&edge.from) {
+                            references.push(referring_node.location);
+                        }
                     }
                 }
             }
@@ -527,7 +672,22 @@ impl SymbolResolver {
 
     /// Clear all caches
     pub fn clear_caches(&self) {
-        self.import_resolution_cache.write().clear();
+        let cleared = {
+            let mut cache = self.import_resolution_cache.write();
+            let cleared = cache.len() as u64;
+            cache.clear();
+            cleared
+        };
+        if cleared > 0 {
+            self.cache_metrics.record_cleanup(cleared);
+        }
+    }
+
+    pub fn get_cache_statistics(&self) -> CacheStatistics {
+        self.cache_metrics.snapshot(
+            self.import_resolution_cache.read().len(),
+            RESOLUTION_CACHE_CAP,
+        )
     }
 
     /// Get symbol table statistics
@@ -544,7 +704,14 @@ impl SymbolResolver {
                 .values()
                 .filter(|v| v.len() > 1)
                 .count(),
+            cache: self.get_cache_statistics(),
         }
+    }
+}
+
+impl Drop for SymbolResolver {
+    fn drop(&mut self) {
+        self.cache_cleanup_stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -574,6 +741,19 @@ pub struct SymbolTableStatistics {
     pub total_modules: usize,
     pub files_indexed: usize,
     pub ambiguous_symbols: usize,
+    pub cache: CacheStatistics,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheStatistics {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub evictions: u64,
+    pub cleanup_runs: u64,
+    pub entries_cleared: u64,
+    pub current_size: usize,
+    pub capacity: usize,
 }
 
 #[cfg(test)]
@@ -598,7 +778,7 @@ mod tests {
             simple_name: "function".to_string(),
             symbol_type: SymbolType::Function,
             definition_location: CodeLocation {
-                file_path: "test.ts".to_string(),
+                file_path: std::path::PathBuf::from("test.ts"),
                 start_line: 1,
                 start_column: 1,
                 end_line: 10,
@@ -612,5 +792,33 @@ mod tests {
         assert!(resolver.register_symbol(entry).is_ok());
         let stats = resolver.get_statistics();
         assert_eq!(stats.total_symbols, 1);
+    }
+
+    #[test]
+    fn test_resolve_symbol() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let resolver = SymbolResolver::new(graph);
+
+        let entry = SymbolEntry {
+            fully_qualified_name: "utils::helper".to_string(),
+            simple_name: "helper".to_string(),
+            symbol_type: SymbolType::Function,
+            definition_location: CodeLocation {
+                file_path: std::path::PathBuf::from("utils.ts"),
+                start_line: 5,
+                start_column: 0,
+                end_line: 15,
+                end_column: 1,
+            },
+            visibility: SymbolVisibility::Public,
+            module_path: vec!["utils".to_string()],
+            metadata: HashMap::new(),
+        };
+
+        resolver.register_symbol(entry).unwrap();
+        let result = resolver.resolve_symbol("helper", std::path::Path::new("test.ts"), &[]);
+        assert!(result.is_ok(), "resolve_symbol should not error");
+        let resolved = result.unwrap();
+        assert_eq!(resolved.symbol.simple_name, "helper");
     }
 }

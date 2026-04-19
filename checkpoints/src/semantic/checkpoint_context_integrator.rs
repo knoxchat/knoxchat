@@ -11,9 +11,67 @@ use super::types::*;
 use crate::error::Result;
 use crate::types::{CheckpointId, FileChange};
 use chrono::Utc;
+use lru::LruCache;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+const CHECKPOINT_CACHE_CAP: usize = 128;
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 300;
+
+#[derive(Debug, Default)]
+struct IntegratorCacheMetrics {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    evictions: AtomicU64,
+    cleanup_runs: AtomicU64,
+    entries_cleared: AtomicU64,
+}
+
+impl IntegratorCacheMetrics {
+    fn record_hit(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_eviction(&self) {
+        self.evictions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_cleanup(&self, cleared_entries: u64) {
+        self.cleanup_runs.fetch_add(1, Ordering::Relaxed);
+        self.entries_cleared
+            .fetch_add(cleared_entries, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self, current_size: usize, capacity: usize) -> CacheStatistics {
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
+        let lookups = hits + misses;
+
+        CacheStatistics {
+            hits,
+            misses,
+            hit_rate: if lookups == 0 {
+                0.0
+            } else {
+                hits as f64 / lookups as f64
+            },
+            evictions: self.evictions.load(Ordering::Relaxed),
+            cleanup_runs: self.cleanup_runs.load(Ordering::Relaxed),
+            entries_cleared: self.entries_cleared.load(Ordering::Relaxed),
+            current_size,
+            capacity,
+        }
+    }
+}
 
 /// Complete checkpoint-based context integrator
 pub struct CheckpointContextIntegrator {
@@ -21,7 +79,9 @@ pub struct CheckpointContextIntegrator {
     temporal_analyzer: Arc<RwLock<TemporalAnalyzer>>,
     symbol_resolver: Arc<SymbolResolver>,
     context_ranker: Arc<RwLock<ContextRanker>>,
-    checkpoint_cache: Arc<RwLock<HashMap<CheckpointId, CheckpointContext>>>,
+    checkpoint_cache: Arc<RwLock<LruCache<CheckpointId, CheckpointContext>>>,
+    cache_metrics: Arc<IntegratorCacheMetrics>,
+    cache_cleanup_stop: Arc<AtomicBool>,
 }
 
 /// Complete context for a checkpoint
@@ -143,14 +203,54 @@ impl CheckpointContextIntegrator {
         let knowledge_graph = Arc::new(KnowledgeGraph::new());
         let symbol_resolver = Arc::new(SymbolResolver::new(knowledge_graph.clone()));
         let context_ranker = Arc::new(RwLock::new(ContextRanker::new(knowledge_graph.clone())));
+        let checkpoint_cache = Arc::new(RwLock::new(LruCache::new(
+            NonZeroUsize::new(CHECKPOINT_CACHE_CAP).unwrap(),
+        )));
+        let cache_metrics = Arc::new(IntegratorCacheMetrics::default());
+        let cache_cleanup_stop = Arc::new(AtomicBool::new(false));
+
+        Self::start_cache_cleanup_task(
+            checkpoint_cache.clone(),
+            cache_metrics.clone(),
+            cache_cleanup_stop.clone(),
+        );
 
         Self {
             knowledge_graph: knowledge_graph.clone(),
             temporal_analyzer: Arc::new(RwLock::new(TemporalAnalyzer::new())),
             symbol_resolver,
             context_ranker,
-            checkpoint_cache: Arc::new(RwLock::new(HashMap::new())),
+            checkpoint_cache,
+            cache_metrics,
+            cache_cleanup_stop,
         }
+    }
+
+    fn start_cache_cleanup_task(
+        cache: Arc<RwLock<LruCache<CheckpointId, CheckpointContext>>>,
+        metrics: Arc<IntegratorCacheMetrics>,
+        stop_signal: Arc<AtomicBool>,
+    ) {
+        thread::spawn(move || {
+            while !stop_signal.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
+
+                if stop_signal.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let cleared = {
+                    let mut cache = cache.write();
+                    let cleared = cache.len() as u64;
+                    cache.clear();
+                    cleared
+                };
+
+                if cleared > 0 {
+                    metrics.record_cleanup(cleared);
+                }
+            }
+        });
     }
 
     /// Build complete context for a checkpoint
@@ -162,9 +262,12 @@ impl CheckpointContextIntegrator {
         let start_time = std::time::Instant::now();
 
         // Check cache
-        if let Some(cached) = self.checkpoint_cache.read().get(&checkpoint_id) {
+        if let Some(cached) = self.checkpoint_cache.write().get(&checkpoint_id) {
+            self.cache_metrics.record_hit();
             return Ok(cached.clone());
         }
+
+        self.cache_metrics.record_miss();
 
         // Build semantic context
         let semantic_context = self.build_semantic_context(file_changes)?;
@@ -194,9 +297,11 @@ impl CheckpointContextIntegrator {
         };
 
         // Cache the context
-        self.checkpoint_cache
-            .write()
-            .insert(checkpoint_id, context.clone());
+        let mut cache = self.checkpoint_cache.write();
+        if cache.len() == CHECKPOINT_CACHE_CAP {
+            self.cache_metrics.record_eviction();
+        }
+        cache.put(checkpoint_id, context.clone());
 
         Ok(context)
     }
@@ -213,15 +318,15 @@ impl CheckpointContextIntegrator {
         let mut all_entities = Vec::new();
 
         for checkpoint_id in checkpoint_ids {
-            if let Some(context) = self.checkpoint_cache.read().get(checkpoint_id) {
+            if let Some(context) = self.checkpoint_cache.write().get(checkpoint_id) {
                 // Extract relevant entities from this checkpoint
-                for (_, entity) in &context.semantic_context.functions {
+                for entity in context.semantic_context.functions.values() {
                     if self.is_relevant_to_query(query, &entity.name) {
                         all_entities.push(EntityDefinition::Function(entity.clone()));
                     }
                 }
 
-                for (_, entity) in &context.semantic_context.classes {
+                for entity in context.semantic_context.classes.values() {
                     if self.is_relevant_to_query(query, &entity.name) {
                         all_entities.push(EntityDefinition::Class(entity.clone()));
                     }
@@ -550,9 +655,22 @@ impl CheckpointContextIntegrator {
 
     /// Clear all caches
     pub fn clear_caches(&self) {
-        self.checkpoint_cache.write().clear();
+        let cleared = {
+            let mut cache = self.checkpoint_cache.write();
+            let cleared = cache.len() as u64;
+            cache.clear();
+            cleared
+        };
+        if cleared > 0 {
+            self.cache_metrics.record_cleanup(cleared);
+        }
         self.symbol_resolver.clear_caches();
         self.knowledge_graph.clear();
+    }
+
+    pub fn get_cache_statistics(&self) -> CacheStatistics {
+        self.cache_metrics
+            .snapshot(self.checkpoint_cache.read().len(), CHECKPOINT_CACHE_CAP)
     }
 
     /// Get statistics
@@ -567,7 +685,14 @@ impl CheckpointContextIntegrator {
             total_edges: graph_stats.total_edges,
             total_symbols: symbol_stats.total_symbols,
             total_modules: symbol_stats.total_modules,
+            cache: self.get_cache_statistics(),
         }
+    }
+}
+
+impl Drop for CheckpointContextIntegrator {
+    fn drop(&mut self) {
+        self.cache_cleanup_stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -585,6 +710,19 @@ pub struct IntegratorStatistics {
     pub total_edges: usize,
     pub total_symbols: usize,
     pub total_modules: usize,
+    pub cache: CacheStatistics,
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheStatistics {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub evictions: u64,
+    pub cleanup_runs: u64,
+    pub entries_cleared: u64,
+    pub current_size: usize,
+    pub capacity: usize,
 }
 
 #[cfg(test)]

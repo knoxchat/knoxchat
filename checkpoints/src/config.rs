@@ -234,11 +234,11 @@ impl CheckpointConfig {
             CheckpointError::file_system(format!("Failed to create storage directory: {}", e))
         })?;
 
-        std::fs::create_dir_all(&self.data_path()).map_err(|e| {
+        std::fs::create_dir_all(self.data_path()).map_err(|e| {
             CheckpointError::file_system(format!("Failed to create data directory: {}", e))
         })?;
 
-        std::fs::create_dir_all(&self.backup_path()).map_err(|e| {
+        std::fs::create_dir_all(self.backup_path()).map_err(|e| {
             CheckpointError::file_system(format!("Failed to create backup directory: {}", e))
         })?;
 

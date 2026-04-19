@@ -321,19 +321,15 @@ impl ContextExplainer {
     pub fn format_query_explanation(&self, explanation: &QueryExplanation) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!(
-            "╔══════════════════════════════════════════════════════════════╗\n"
-        ));
+        output.push_str("╔══════════════════════════════════════════════════════════════╗\n");
         output.push_str(&format!(
             "║ Query Explanation: {:<44} ║\n",
             truncate(&explanation.query, 44)
         ));
-        output.push_str(&format!(
-            "╚══════════════════════════════════════════════════════════════╝\n\n"
-        ));
+        output.push_str("╚══════════════════════════════════════════════════════════════╝\n\n");
 
         // Query interpretation
-        output.push_str(&format!("📊 Query Interpretation:\n"));
+        output.push_str("📊 Query Interpretation:\n");
         output.push_str(&format!(
             "  Intent: {}\n",
             explanation.query_interpretation.inferred_intent
@@ -371,11 +367,11 @@ impl ContextExplainer {
                 i + 1,
                 self.format_explanation(item_explanation)
             ));
-            output.push_str("\n");
+            output.push('\n');
         }
 
         // Coverage analysis
-        output.push_str(&format!("📈 Coverage Analysis:\n"));
+        output.push_str("📈 Coverage Analysis:\n");
         output.push_str(&format!(
             "  Entities covered: {}/{}\n",
             explanation.coverage_analysis.query_entities_covered,
@@ -401,7 +397,7 @@ impl ContextExplainer {
         }
 
         // Exclusion summary
-        output.push_str(&format!("\n❌ Exclusion Summary:\n"));
+        output.push_str("\n❌ Exclusion Summary:\n");
         output.push_str(&format!(
             "  Total excluded: {}\n",
             explanation.exclusion_summary.total_excluded
@@ -417,7 +413,7 @@ impl ContextExplainer {
 
         // Recommendations
         if !explanation.recommendations.is_empty() {
-            output.push_str(&format!("\n💡 Recommendations:\n"));
+            output.push_str("\n💡 Recommendations:\n");
             for rec in &explanation.recommendations {
                 output.push_str(&format!("  • {}\n", rec));
             }
@@ -475,37 +471,33 @@ impl ContextExplainer {
     }
 
     fn build_score_breakdown(&self, ranked_context: &RankedContext) -> ScoreBreakdown {
-        let mut factors = Vec::new();
-
-        factors.push((
-            "Relevance".to_string(),
-            ranked_context.relevance_score,
-            format!("Match to query entities and intent"),
-        ));
-
-        factors.push((
-            "Importance".to_string(),
-            ranked_context.importance_score,
-            format!("Visibility, documentation, and structural importance"),
-        ));
-
-        factors.push((
-            "Centrality".to_string(),
-            ranked_context.centrality_score,
-            format!("Position in dependency graph"),
-        ));
-
-        factors.push((
-            "Recency".to_string(),
-            ranked_context.recency_score,
-            format!("Recent modifications and activity"),
-        ));
-
-        factors.push((
-            "Diversity".to_string(),
-            ranked_context.diversity_score,
-            format!("Contribution to overall context diversity"),
-        ));
+        let factors = vec![
+            (
+                "Relevance".to_string(),
+                ranked_context.relevance_score,
+                "Match to query entities and intent".to_string(),
+            ),
+            (
+                "Importance".to_string(),
+                ranked_context.importance_score,
+                "Visibility, documentation, and structural importance".to_string(),
+            ),
+            (
+                "Centrality".to_string(),
+                ranked_context.centrality_score,
+                "Position in dependency graph".to_string(),
+            ),
+            (
+                "Recency".to_string(),
+                ranked_context.recency_score,
+                "Recent modifications and activity".to_string(),
+            ),
+            (
+                "Diversity".to_string(),
+                ranked_context.diversity_score,
+                "Contribution to overall context diversity".to_string(),
+            ),
+        ];
 
         ScoreBreakdown {
             total_score: ranked_context.rank_score,

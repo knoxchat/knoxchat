@@ -415,7 +415,7 @@ impl FlowAnalyzer {
 
                 definitions
                     .entry(var.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(Definition {
                         variable: var.clone(),
                         statement_id: stmt.id.clone(),
@@ -449,7 +449,7 @@ impl FlowAnalyzer {
                     },
                 );
 
-                uses.entry(var.clone()).or_insert_with(Vec::new).push(Use {
+                uses.entry(var.clone()).or_default().push(Use {
                     variable: var.clone(),
                     statement_id: stmt.id.clone(),
                     location: stmt.location.clone(),

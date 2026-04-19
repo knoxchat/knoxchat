@@ -101,14 +101,14 @@ impl KnowledgeGraph {
         self.node_index
             .write()
             .entry(node_type)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(node_id.clone());
 
         // Update file index
         self.file_index
             .write()
             .entry(file_path)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(node_id);
 
         Ok(())
@@ -139,14 +139,14 @@ impl KnowledgeGraph {
         self.adjacency_list
             .write()
             .entry(edge.from.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(edge.clone());
 
         // Update reverse adjacency list
         self.reverse_adjacency_list
             .write()
             .entry(edge.to.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(edge);
 
         Ok(())
@@ -243,7 +243,7 @@ impl KnowledgeGraph {
                 let mut path = Vec::new();
                 let mut current = to.to_string();
 
-                while &current != from {
+                while current != from {
                     if let Some(node) = self.get_node(&current) {
                         path.push(node);
                     }
@@ -564,6 +564,7 @@ pub struct GraphStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_graph_creation() {
@@ -582,7 +583,7 @@ mod tests {
             name: "testFunction".to_string(),
             file_path: "test.ts".to_string(),
             location: CodeLocation {
-                file_path: "test.ts".to_string(),
+                file_path: std::path::PathBuf::from("test.ts"),
                 start_line: 1,
                 start_column: 1,
                 end_line: 10,
@@ -607,7 +608,7 @@ mod tests {
             name: "function1".to_string(),
             file_path: "test.ts".to_string(),
             location: CodeLocation {
-                file_path: "test.ts".to_string(),
+                file_path: std::path::PathBuf::from("test.ts"),
                 start_line: 1,
                 start_column: 1,
                 end_line: 5,
@@ -623,7 +624,7 @@ mod tests {
             name: "function2".to_string(),
             file_path: "test.ts".to_string(),
             location: CodeLocation {
-                file_path: "test.ts".to_string(),
+                file_path: std::path::PathBuf::from("test.ts"),
                 start_line: 7,
                 start_column: 1,
                 end_line: 12,

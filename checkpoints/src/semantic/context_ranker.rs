@@ -522,6 +522,7 @@ impl ContextRanker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_context_ranker_creation() {
@@ -535,20 +536,26 @@ mod tests {
         let graph = Arc::new(KnowledgeGraph::new());
         let ranker = ContextRanker::new(graph);
 
-        let entity = EntityDefinition {
+        let entity = EntityDefinition::Function(FunctionDefinition {
             name: "testFunction".to_string(),
-            entity_type: EntityType::Function,
+            parameters: vec![],
+            return_type: None,
+            visibility: Visibility::Public,
+            is_async: false,
+            is_static: false,
+            documentation: Some("Test documentation".to_string()),
             location: CodeLocation {
-                file_path: "test.ts".to_string(),
+                file_path: PathBuf::from("test.ts"),
                 start_line: 1,
                 start_column: 1,
                 end_line: 10,
                 end_column: 1,
             },
-            visibility: "public".to_string(),
-            documentation: Some("Test documentation".to_string()),
-            metadata: HashMap::new(),
-        };
+            calls: vec![],
+            called_by: vec![],
+            complexity: 1,
+            lines_of_code: 10,
+        });
 
         let tokens = ranker.estimate_tokens(&entity);
         assert!(tokens > 0);

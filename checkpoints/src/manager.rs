@@ -1,10 +1,15 @@
 //! Main checkpoint manager that orchestrates all checkpoint operations
 
+use crate::analysis::CheckpointAnalyzer;
+use crate::branching::BranchManager;
 use crate::changeset_tracker::{ChangesetTracker, OperationMode};
+use crate::collaborative::CollaborativeManager;
 use crate::config::CheckpointConfig;
 use crate::db::CheckpointDatabase;
 use crate::error::{CheckpointError, Result};
 use crate::file_tracker::FileTracker;
+use crate::incremental::IncrementalCheckpointManager;
+use crate::monitoring::PerformanceMonitor;
 use crate::restoration::CheckpointRestoration;
 use crate::storage::CheckpointStorage;
 use crate::types::*;
@@ -29,6 +34,20 @@ pub struct CheckpointManager {
     performance_tracker: Arc<RwLock<PerformanceTracker>>,
     /// Whether to use the new changeset-based tracking (agent mode only)
     use_changeset_tracking: bool,
+    /// Phase 8.1: Incremental checkpoint manager
+    incremental: Arc<IncrementalCheckpointManager>,
+    /// Phase 8.2: Branch manager
+    branch_manager: Arc<BranchManager>,
+    /// Phase 8.3: Checkpoint analyzer
+    analyzer: Arc<CheckpointAnalyzer>,
+    /// Current branch ID (None = main/default)
+    current_branch_id: Arc<RwLock<Option<BranchId>>>,
+    /// Incremental checkpointing config
+    incremental_config: IncrementalConfig,
+    /// Phase 8.4: Collaborative checkpoint manager
+    collaborative: Arc<CollaborativeManager>,
+    /// Phase 8.5: Performance monitor
+    monitor: Arc<PerformanceMonitor>,
 }
 
 /// Tracks performance metrics for operations
@@ -45,6 +64,9 @@ impl CheckpointManager {
         workspace_path: PathBuf,
         session_id: SessionId,
     ) -> Result<Self> {
+        // Ensure the storage directory exists before opening the database
+        std::fs::create_dir_all(&config.storage_path)?;
+
         let database = Arc::new(CheckpointDatabase::new(
             config.storage_path.join("checkpoints.db"),
         )?);
@@ -65,8 +87,8 @@ impl CheckpointManager {
 
         Ok(Self {
             config: config.clone(),
-            database,
-            storage,
+            database: database.clone(),
+            storage: storage.clone(),
             file_tracker,
             changeset_tracker,
             restoration,
@@ -74,6 +96,35 @@ impl CheckpointManager {
             workspace_path,
             performance_tracker: Arc::new(RwLock::new(PerformanceTracker::default())),
             use_changeset_tracking: true, // Enable by default for better performance
+            incremental: Arc::new(IncrementalCheckpointManager::new(
+                IncrementalConfig::default(),
+                database.clone(),
+            )),
+            branch_manager: Arc::new(BranchManager::new(
+                database.clone(),
+                storage.clone(),
+                session_id,
+            )),
+            analyzer: Arc::new(CheckpointAnalyzer::new(database.clone())),
+            current_branch_id: Arc::new(RwLock::new(None)),
+            incremental_config: IncrementalConfig::default(),
+            collaborative: Arc::new(CollaborativeManager::new(
+                database.clone(),
+                storage.clone(),
+                &std::env::var("USER")
+                    .or_else(|_| std::env::var("USERNAME"))
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                &std::env::var("USER")
+                    .or_else(|_| std::env::var("USERNAME"))
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                &std::env::var("HOSTNAME")
+                    .or_else(|_| std::env::var("COMPUTERNAME"))
+                    .unwrap_or_else(|_| "unknown-machine".to_string()),
+            )),
+            monitor: Arc::new(PerformanceMonitor::new(
+                database.clone(),
+                config.storage_path.clone(),
+            )),
         })
     }
 
@@ -164,6 +215,7 @@ impl CheckpointManager {
             .description
             .unwrap_or_else(|| self.generate_ai_description(&limited_changes));
 
+        let branch_id = self.current_branch_id.read().clone();
         let checkpoint = Checkpoint {
             id: checkpoint_id,
             session_id: self.current_session_id,
@@ -175,6 +227,10 @@ impl CheckpointManager {
             size_bytes: total_size,
             tags: options.tags,
             metadata: options.metadata,
+            parent_checkpoint_id: None,
+            is_full_snapshot: true,
+            delta_depth: 0,
+            branch_id,
         };
 
         // Store checkpoint data
@@ -182,6 +238,14 @@ impl CheckpointManager {
 
         // Store checkpoint metadata in database
         self.database.create_checkpoint(&checkpoint)?;
+
+        // Record storage metrics (compression ratio + dedup savings)
+        if let Ok(storage_stats) = self.storage.get_storage_stats() {
+            let _ = self.database.record_storage_metrics(
+                storage_stats.compression_ratio,
+                storage_stats.deduplication_savings_bytes,
+            );
+        }
 
         // Record performance metrics
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -296,6 +360,7 @@ impl CheckpointManager {
             .description
             .unwrap_or_else(|| self.generate_auto_description(&limited_changes));
 
+        let branch_id = self.current_branch_id.read().clone();
         let checkpoint = Checkpoint {
             id: checkpoint_id,
             session_id: self.current_session_id,
@@ -307,13 +372,25 @@ impl CheckpointManager {
             size_bytes: total_size,
             tags: options.tags,
             metadata: options.metadata,
+            parent_checkpoint_id: None,
+            is_full_snapshot: true,
+            delta_depth: 0,
+            branch_id,
         };
 
-        // Store checkpoint data
+        // Store checkpoint data (traditional)
         self.storage.store_checkpoint(&checkpoint)?;
 
         // Store checkpoint metadata in database
         self.database.create_checkpoint(&checkpoint)?;
+
+        // Record storage metrics (compression ratio + dedup savings)
+        if let Ok(storage_stats) = self.storage.get_storage_stats() {
+            let _ = self.database.record_storage_metrics(
+                storage_stats.compression_ratio,
+                storage_stats.deduplication_savings_bytes,
+            );
+        }
 
         // Record performance metrics
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -519,6 +596,7 @@ impl CheckpointManager {
             .description
             .unwrap_or_else(|| self.generate_auto_description(&limited_changes));
 
+        let branch_id = self.current_branch_id.read().clone();
         let checkpoint = Checkpoint {
             id: checkpoint_id,
             session_id: self.current_session_id,
@@ -530,6 +608,10 @@ impl CheckpointManager {
             size_bytes: total_size,
             tags: options.tags,
             metadata: options.metadata,
+            parent_checkpoint_id: None,
+            is_full_snapshot: true,
+            delta_depth: 0,
+            branch_id,
         };
 
         // Store checkpoint data
@@ -537,6 +619,14 @@ impl CheckpointManager {
 
         // Store checkpoint metadata in database
         self.database.create_checkpoint(&checkpoint)?;
+
+        // Record storage metrics (compression ratio + dedup savings)
+        if let Ok(storage_stats) = self.storage.get_storage_stats() {
+            let _ = self.database.record_storage_metrics(
+                storage_stats.compression_ratio,
+                storage_stats.deduplication_savings_bytes,
+            );
+        }
 
         // Record performance metrics
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -620,6 +710,28 @@ impl CheckpointManager {
             },
         )?;
 
+        let restoration_event = RestorationEvent {
+            timestamp: chrono::Utc::now(),
+            checkpoint_id: *checkpoint_id,
+            success: result.success,
+            duration_ms: duration,
+            files_restored: result.restored_files.len() as u64,
+            files_failed: result.failed_files.len() as u64,
+            error: if result.success {
+                None
+            } else {
+                result
+                    .failed_files
+                    .first()
+                    .map(|(_, message)| message.clone())
+                    .or_else(|| {
+                        (!result.conflicts.is_empty())
+                            .then(|| format!("{} conflicts detected", result.conflicts.len()))
+                    })
+            },
+        };
+        self.monitor.record_restoration_event(&restoration_event)?;
+
         Ok(result)
     }
 
@@ -659,7 +771,15 @@ impl CheckpointManager {
         // Also cleanup unused content in storage
         let _freed_bytes = self.storage.cleanup_unused_content()?;
 
+        // Run storage garbage collection to remove orphaned content blobs
+        let _gc_freed = self.storage.run_gc()?;
+
         Ok(deleted_count)
+    }
+
+    /// Run storage garbage collection independently
+    pub fn run_storage_gc(&self) -> Result<u64> {
+        self.storage.run_gc()
     }
 
     /// Create a backup of checkpoints
@@ -716,5 +836,325 @@ impl CheckpointManager {
     pub fn flush(&self) -> Result<()> {
         self.storage.flush()?;
         Ok(())
+    }
+
+    // ========================================
+    // Phase 8.1: Incremental Checkpointing
+    // ========================================
+
+    /// Create an incremental (delta) checkpoint that only stores changed files
+    pub fn create_incremental_checkpoint(
+        &self,
+        options: CheckpointOptions,
+    ) -> Result<CheckpointId> {
+        let start_time = Instant::now();
+        let branch_id = self.current_branch_id.read().clone();
+
+        // Determine if this should be a full snapshot or delta
+        let is_full_snapshot = self.incremental.should_create_full_snapshot(
+            &self.current_session_id,
+            branch_id.as_deref(),
+        )?;
+
+        // Detect file changes
+        let file_changes = {
+            let mut tracker = self.file_tracker.write();
+            tracker.detect_changes()?
+        };
+
+        if file_changes.is_empty() && options.description.is_none() {
+            return Err(CheckpointError::validation(
+                "No changes detected for checkpoint",
+            ));
+        }
+
+        // Compute delta if incremental
+        let (final_changes, parent_id, delta_depth) = if is_full_snapshot {
+            (file_changes, None, 0u32)
+        } else {
+            let parent_id = self.incremental.get_parent_checkpoint_id(
+                &self.current_session_id,
+                branch_id.as_deref(),
+            )?;
+
+            if let Some(pid) = parent_id {
+                if let Some(parent_cp) = self.database.get_checkpoint(&pid)? {
+                    let delta = self.incremental.compute_delta(&file_changes, &parent_cp);
+                    let depth = self.incremental.get_next_delta_depth(
+                        &self.current_session_id,
+                        branch_id.as_deref(),
+                    )?;
+                    (delta, Some(pid), depth)
+                } else {
+                    (file_changes, None, 0)
+                }
+            } else {
+                (file_changes, None, 0)
+            }
+        };
+
+        let total_size: u64 = final_changes.iter().map(|c| c.size_bytes).sum();
+        let file_inventory = self.capture_complete_file_inventory()?;
+        let checkpoint_id = Uuid::new_v4();
+        let description = options
+            .description
+            .unwrap_or_else(|| self.generate_auto_description(&final_changes));
+
+        let checkpoint = Checkpoint {
+            id: checkpoint_id,
+            session_id: self.current_session_id,
+            description,
+            created_at: Utc::now(),
+            file_changes: final_changes.clone(),
+            file_inventory,
+            files_affected: final_changes.len(),
+            size_bytes: total_size,
+            tags: options.tags,
+            metadata: options.metadata,
+            parent_checkpoint_id: parent_id,
+            is_full_snapshot,
+            delta_depth,
+            branch_id: branch_id.clone(),
+        };
+
+        self.storage.store_checkpoint(&checkpoint)?;
+        self.database.create_incremental_checkpoint(&checkpoint)?;
+
+        // Update branch head if on a branch
+        if let Some(bid) = &branch_id {
+            let _ = self.database.update_branch_head(bid, &checkpoint_id);
+        }
+
+        let duration = start_time.elapsed().as_secs_f64() * 1000.0;
+        {
+            let mut perf = self.performance_tracker.write();
+            perf.checkpoint_creation_times.push(duration);
+        }
+
+        log::info!(
+            "Created {} checkpoint {} (depth={}, changes={}) in {:.2}ms",
+            if is_full_snapshot { "full" } else { "incremental" },
+            checkpoint_id,
+            delta_depth,
+            final_changes.len(),
+            duration
+        );
+
+        Ok(checkpoint_id)
+    }
+
+    /// Reconstruct a checkpoint from its delta chain
+    pub fn reconstruct_checkpoint(
+        &self,
+        checkpoint_id: &CheckpointId,
+    ) -> Result<ReconstructedCheckpoint> {
+        self.incremental.reconstruct_from_chain(checkpoint_id)
+    }
+
+    /// Configure incremental checkpointing
+    pub fn set_incremental_config(&mut self, config: IncrementalConfig) {
+        self.incremental_config = config.clone();
+        self.incremental = Arc::new(IncrementalCheckpointManager::new(
+            config,
+            self.database.clone(),
+        ));
+    }
+
+    // ========================================
+    // Phase 8.2: Branching & Merging
+    // ========================================
+
+    /// Create a new branch from a checkpoint
+    pub fn create_branch(
+        &self,
+        name: &str,
+        base_checkpoint_id: &CheckpointId,
+        description: &str,
+    ) -> Result<Branch> {
+        self.branch_manager
+            .create_branch(name, base_checkpoint_id, description)
+    }
+
+    /// Switch to a different branch
+    pub fn switch_branch(&self, branch_id: &str) -> Result<()> {
+        let branch = self
+            .branch_manager
+            .get_branch(branch_id)?
+            .ok_or_else(|| CheckpointError::generic("Branch not found"))?;
+
+        *self.current_branch_id.write() = Some(branch_id.to_string());
+
+        log::info!("Switched to branch '{}' ({})", branch.name, branch_id);
+        Ok(())
+    }
+
+    /// Get current branch ID
+    pub fn current_branch_id(&self) -> Option<BranchId> {
+        self.current_branch_id.read().clone()
+    }
+
+    /// List all branches
+    pub fn list_branches(&self) -> Result<Vec<Branch>> {
+        self.branch_manager.list_branches()
+    }
+
+    /// Delete a branch
+    pub fn delete_branch(&self, branch_id: &str) -> Result<()> {
+        // Don't allow deleting current branch
+        if self.current_branch_id.read().as_deref() == Some(branch_id) {
+            return Err(CheckpointError::validation(
+                "Cannot delete the currently active branch",
+            ));
+        }
+        self.branch_manager.delete_branch(branch_id)
+    }
+
+    /// Merge source branch into target branch
+    pub fn merge_branches(
+        &self,
+        source_branch_id: &str,
+        target_branch_id: &str,
+        strategy: MergeStrategy,
+    ) -> Result<MergeResult> {
+        self.branch_manager
+            .merge_branches(source_branch_id, target_branch_id, strategy)
+    }
+
+    /// List checkpoints on a specific branch
+    pub fn list_branch_checkpoints(
+        &self,
+        branch_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<Checkpoint>> {
+        self.branch_manager
+            .list_branch_checkpoints(branch_id, limit)
+    }
+
+    // ========================================
+    // Phase 8.3: AI-Powered Analysis
+    // ========================================
+
+    /// Analyze a checkpoint for risks, impact, and description
+    pub fn analyze_checkpoint(
+        &self,
+        checkpoint_id: &CheckpointId,
+    ) -> Result<CheckpointAnalysis> {
+        self.analyzer.analyze_checkpoint(checkpoint_id)
+    }
+
+    /// Suggest groupings for recent checkpoints
+    pub fn suggest_checkpoint_groups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<GroupingSuggestion>> {
+        self.analyzer
+            .suggest_checkpoint_groups(&self.current_session_id, limit)
+    }
+
+    /// Get stats including incremental info
+    pub fn get_stats(&self) -> Result<CheckpointStats> {
+        self.database.get_stats()
+    }
+
+    // ========================================
+    // Phase 8.4: Collaborative Checkpoints
+    // ========================================
+
+    /// Share checkpoints as a bundle
+    pub fn share_checkpoints(
+        &self,
+        checkpoint_ids: &[CheckpointId],
+        description: &str,
+    ) -> Result<SharedCheckpointBundle> {
+        self.collaborative.share_checkpoints(checkpoint_ids, description)
+    }
+
+    /// Import a shared checkpoint bundle
+    pub fn import_shared_bundle(
+        &self,
+        bundle: &SharedCheckpointBundle,
+    ) -> Result<Vec<CheckpointId>> {
+        self.collaborative.import_shared_bundle(bundle)
+    }
+
+    /// List shared bundles
+    pub fn list_shared_bundles(&self) -> Result<Vec<SharedCheckpointBundle>> {
+        self.collaborative.list_shared_bundles()
+    }
+
+    /// Export checkpoints for sync
+    pub fn export_for_sync(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<SharedCheckpointBundle> {
+        self.collaborative.export_for_sync(since)
+    }
+
+    /// Import a sync bundle
+    pub fn import_sync_bundle(
+        &self,
+        bundle: &SharedCheckpointBundle,
+    ) -> Result<SyncStatus> {
+        self.collaborative.import_sync_bundle(bundle)
+    }
+
+    /// Get the current collaborative sync status.
+    pub fn get_sync_status(&self) -> Result<SyncStatus> {
+        self.collaborative.get_sync_status()
+    }
+
+    /// Get audit trail
+    pub fn get_audit_trail(
+        &self,
+        limit: usize,
+        action_filter: Option<&str>,
+    ) -> Result<Vec<AuditRecord>> {
+        self.collaborative.get_audit_trail(limit, action_filter)
+    }
+
+    /// Get audit trail for a specific resource
+    pub fn get_resource_audit_trail(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<Vec<AuditRecord>> {
+        self.collaborative.get_resource_audit_trail(resource_type, resource_id)
+    }
+
+    // ========================================
+    // Phase 8.5: Performance Monitoring
+    // ========================================
+
+    /// Get the full performance dashboard
+    pub fn get_performance_dashboard(
+        &self,
+        history_days: u32,
+    ) -> Result<PerformanceDashboard> {
+        self.monitor.get_dashboard(history_days)
+    }
+
+    /// Get current storage usage
+    pub fn get_storage_usage(&self) -> Result<StorageUsageSnapshot> {
+        self.monitor.get_current_storage_usage()
+    }
+
+    /// Record a storage snapshot (call periodically)
+    pub fn record_storage_snapshot(&self) -> Result<()> {
+        self.monitor.record_storage_snapshot()
+    }
+
+    /// Record a restoration event
+    pub fn record_restoration_event(&self, event: &RestorationEvent) -> Result<()> {
+        self.monitor.record_restoration_event(event)
+    }
+
+    /// Record AI session metrics
+    pub fn record_ai_session_metrics(&self, metrics: &AISessionMetrics) -> Result<()> {
+        self.monitor.record_ai_session_metrics(metrics)
+    }
+
+    /// Get restoration success rate
+    pub fn get_restoration_success_rate(&self) -> Result<f64> {
+        self.monitor.get_restoration_success_rate()
     }
 }

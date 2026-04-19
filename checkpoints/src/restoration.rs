@@ -100,9 +100,9 @@ impl CheckpointRestoration {
                 Ok(backup_id) => result.backup_checkpoint_id = Some(backup_id),
                 Err(e) => {
                     log::warn!("Failed to create pre-restore backup: {}", e);
-                    if options.conflict_resolution == ConflictResolution::Prompt {
+                    if options.require_backup {
                         return Err(CheckpointError::restoration_failed(
-                            "Failed to create backup and user requires backup",
+                            "Failed to create pre-restore backup (require_backup=true)",
                         ));
                     }
                 }
@@ -141,6 +141,16 @@ impl CheckpointRestoration {
         // Detect conflicts before restoration
         let conflicts = self.detect_conflicts(&files_to_restore, options)?;
         result.conflicts = conflicts.clone();
+
+        // Dry-run mode: return conflicts without modifying any files
+        if options.dry_run {
+            log::info!(
+                "Dry-run complete: detected {} conflicts for {} files",
+                conflicts.len(),
+                files_to_restore.len()
+            );
+            return Ok(result);
+        }
 
         // Create a set of conflicted file paths for quick lookup
         let conflicted_paths: std::collections::HashSet<_> =
@@ -191,14 +201,63 @@ impl CheckpointRestoration {
             self.validate_restored_files(&result.restored_files, &resolved_files)?;
         }
 
+        // Clean up backup after successful, validated restoration
+        if result.success {
+            if let Some(backup_id) = &result.backup_checkpoint_id {
+                log::info!("Restoration succeeded; backup {} retained for safety", backup_id);
+            }
+        }
+
         Ok(result)
     }
 
-    /// Create a backup of current state before restoration
+    /// Create a backup of current state before restoration.
+    /// Captures workspace files so the user can roll back if needed.
     fn create_pre_restore_backup(&self) -> Result<CheckpointId> {
-        // This would create a checkpoint of the current state
-        // For now, return a placeholder ID
-        Ok(uuid::Uuid::new_v4())
+        let backup_id = uuid::Uuid::new_v4();
+        let backup_dir = self.workspace_path.join(".checkpoints").join("backups").join(backup_id.to_string());
+
+        fs::create_dir_all(&backup_dir).map_err(|e| {
+            CheckpointError::generic(format!("Failed to create backup directory: {}", e))
+        })?;
+
+        // Walk workspace and back up files (skipping hidden dirs / backup dir itself)
+        let mut file_count: usize = 0;
+        for entry in walkdir::WalkDir::new(&self.workspace_path)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                !name.starts_with('.') && name != "node_modules" && name != "target"
+            })
+        {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let rel = match entry.path().strip_prefix(&self.workspace_path) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let dest = backup_dir.join(rel);
+            if let Some(parent) = dest.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if fs::copy(entry.path(), &dest).is_ok() {
+                file_count += 1;
+            }
+        }
+
+        // Verify backup by checking file count
+        if file_count == 0 {
+            log::warn!("Pre-restore backup {} contains 0 files", backup_id);
+        } else {
+            log::info!("Pre-restore backup {} created with {} files", backup_id, file_count);
+        }
+
+        Ok(backup_id)
     }
 
     /// Detect conflicts that would occur during restoration
@@ -288,12 +347,30 @@ impl CheckpointRestoration {
     fn resolve_conflicts(
         &self,
         conflicts: Vec<ConflictInfo>,
-        _options: &RestoreOptions,
+        options: &RestoreOptions,
     ) -> Result<Vec<FileChange>> {
         let mut resolved_files = Vec::new();
 
         for conflict in conflicts {
-            match conflict.resolution {
+            // Check for per-file resolution override first
+            let resolution = options
+                .per_file_resolutions
+                .get(&conflict.file_path)
+                .copied()
+                .unwrap_or(conflict.resolution);
+
+            // If this is a dry-run, skip actual resolution — conflicts are
+            // already recorded in the result for the caller to inspect.
+            if options.dry_run {
+                log::info!(
+                    "Dry-run: would resolve conflict for {} with {:?}",
+                    conflict.file_path.display(),
+                    resolution
+                );
+                continue;
+            }
+
+            match resolution {
                 ConflictResolution::Skip => {
                     log::info!("Skipping conflicted file: {}", conflict.file_path.display());
                     // Don't add to resolved_files
@@ -387,12 +464,68 @@ impl CheckpointRestoration {
                     resolved_files.push(file_change);
                 }
                 ConflictResolution::Prompt => {
-                    // In a real implementation, this would prompt the user
-                    // For now, we'll default to skip
-                    log::warn!(
-                        "Prompting not implemented, skipping conflicted file: {}",
-                        conflict.file_path.display()
+                    // Interactive prompting is handled by the caller (e.g. VSCode extension).
+                    // In the Rust-only context, fall back to the configured prompt_fallback strategy.
+                    let fallback = options.prompt_fallback;
+                    log::info!(
+                        "Prompt resolution requested for {} — using fallback strategy: {:?}",
+                        conflict.file_path.display(),
+                        fallback
                     );
+
+                    match fallback {
+                        ConflictResolution::Skip => {
+                            log::info!("Fallback: skipping conflicted file: {}", conflict.file_path.display());
+                        }
+                        ConflictResolution::Overwrite | ConflictResolution::Prompt => {
+                            // Treat Prompt-fallback-to-Prompt as Overwrite to avoid infinite loop
+                            let change_type = if conflict.checkpoint_content.is_none() {
+                                ChangeType::Deleted
+                            } else if conflict.current_content.is_none() {
+                                ChangeType::Created
+                            } else {
+                                ChangeType::Modified
+                            };
+                            let size_bytes = conflict.checkpoint_content.as_ref().map(|c| c.len() as u64).unwrap_or(0);
+                            let content_hash = conflict.checkpoint_content.as_ref().map(|c| self.calculate_content_hash(c)).unwrap_or_default();
+                            resolved_files.push(FileChange {
+                                path: conflict.file_path,
+                                change_type,
+                                original_content: conflict.current_content,
+                                new_content: conflict.checkpoint_content,
+                                size_bytes,
+                                content_hash,
+                                permissions: None,
+                                modified_at: Utc::now(),
+                                encoding: FileEncoding::Utf8,
+                                compressed: false,
+                            });
+                        }
+                        ConflictResolution::Backup => {
+                            self.create_conflict_backup(&conflict)?;
+                            let change_type = if conflict.checkpoint_content.is_none() {
+                                ChangeType::Deleted
+                            } else if conflict.current_content.is_none() {
+                                ChangeType::Created
+                            } else {
+                                ChangeType::Modified
+                            };
+                            let size_bytes = conflict.checkpoint_content.as_ref().map(|c| c.len() as u64).unwrap_or(0);
+                            let content_hash = conflict.checkpoint_content.as_ref().map(|c| self.calculate_content_hash(c)).unwrap_or_default();
+                            resolved_files.push(FileChange {
+                                path: conflict.file_path,
+                                change_type,
+                                original_content: conflict.current_content,
+                                new_content: conflict.checkpoint_content,
+                                size_bytes,
+                                content_hash,
+                                permissions: None,
+                                modified_at: Utc::now(),
+                                encoding: FileEncoding::Utf8,
+                                compressed: false,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -570,17 +703,21 @@ impl CheckpointRestoration {
         file_path: &Path,
         timestamp: &chrono::DateTime<Utc>,
     ) -> Result<()> {
-        use std::time::UNIX_EPOCH;
+        use std::fs::FileTimes;
+        use std::time::{Duration, UNIX_EPOCH};
 
-        let system_time = UNIX_EPOCH + std::time::Duration::from_secs(timestamp.timestamp() as u64);
+        let ts_secs = timestamp.timestamp() as u64;
+        let system_time = UNIX_EPOCH + Duration::from_secs(ts_secs);
 
-        // Note: Setting file timestamps requires additional dependencies or platform-specific code
-        // For now, we'll just log that we would set the timestamp
-        log::debug!(
-            "Would set timestamp for {}: {:?}",
-            file_path.display(),
-            system_time
-        );
+        let file = fs::File::options().write(true).open(file_path)?;
+        let times = FileTimes::new()
+            .set_accessed(system_time)
+            .set_modified(system_time);
+
+        file.set_times(times).map_err(|e| {
+            log::warn!("Could not set timestamp for {}: {}", file_path.display(), e);
+            CheckpointError::generic(format!("Failed to set timestamp: {}", e))
+        })?;
 
         Ok(())
     }
@@ -755,12 +892,16 @@ impl Default for RestoreOptions {
     fn default() -> Self {
         Self {
             create_backup: true,
+            require_backup: true,
             restore_permissions: true,
             restore_timestamps: true,
             include_files: Vec::new(),
             exclude_files: Vec::new(),
             conflict_resolution: ConflictResolution::Prompt,
             validate_checksums: true,
+            per_file_resolutions: std::collections::HashMap::new(),
+            prompt_fallback: ConflictResolution::Backup,
+            dry_run: false,
         }
     }
 }

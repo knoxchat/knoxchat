@@ -398,7 +398,7 @@ impl TypeInferencer {
         let errors = Vec::new();
         let mut warnings = Vec::new();
 
-        for (_, inferred) in inferred_types {
+        for inferred in inferred_types.values() {
             // Check for low confidence
             if inferred.confidence < self.config.confidence_threshold {
                 warnings.push(TypeWarning {

@@ -433,7 +433,7 @@ impl IncrementalUpdater {
             tracker
                 .reverse_dependencies
                 .entry(dep)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(file_path.to_string());
         }
 

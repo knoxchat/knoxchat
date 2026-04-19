@@ -412,6 +412,7 @@ pub struct UsagePattern {
 
 /// Code relationships and dependencies
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CodeRelationships {
     pub direct_dependencies: Vec<String>,
     pub transitive_dependencies: Vec<String>,
@@ -864,17 +865,6 @@ impl Default for ArchitecturalImpact {
     }
 }
 
-impl Default for CodeRelationships {
-    fn default() -> Self {
-        Self {
-            direct_dependencies: Vec::new(),
-            transitive_dependencies: Vec::new(),
-            dependents: Vec::new(),
-            coupling_strength: std::collections::HashMap::new(),
-            cohesion_metrics: CohesionMetrics::default(),
-        }
-    }
-}
 
 impl Default for CohesionMetrics {
     fn default() -> Self {

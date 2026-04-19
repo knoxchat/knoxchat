@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("normal_file.txt"), "normal_file.txt");
-        assert_eq!(sanitize_filename("file<>:\"|?*.txt"), "file________.txt");
+        assert_eq!(sanitize_filename("file<>:\"|?*.txt"), "file_______.txt");
         assert_eq!(sanitize_filename("   "), "unnamed");
         assert_eq!(sanitize_filename(""), "unnamed");
         assert_eq!(
@@ -384,7 +384,7 @@ mod tests {
     fn test_path_depth() {
         assert_eq!(path_depth(Path::new("file.txt")), 1);
         assert_eq!(path_depth(Path::new("dir/file.txt")), 2);
-        assert_eq!(path_depth(Path::new("/home/user/docs/file.txt")), 4);
-        assert_eq!(path_depth(Path::new("")), 1); // Empty path has one empty component
+        assert_eq!(path_depth(Path::new("/home/user/docs/file.txt")), 5);
+        assert_eq!(path_depth(Path::new("")), 0);
     }
 }

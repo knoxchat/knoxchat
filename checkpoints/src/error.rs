@@ -146,6 +146,16 @@ impl CheckpointError {
         }
     }
 
+    /// Create a checkpoint not found error
+    pub fn checkpoint_not_found<S: Into<String>>(id: S) -> Self {
+        Self::CheckpointNotFound { id: id.into() }
+    }
+
+    /// Alias for checkpoint_not_found
+    pub fn not_found<S: Into<String>>(id: S) -> Self {
+        Self::CheckpointNotFound { id: id.into() }
+    }
+
     /// Check if this error is recoverable
     pub fn is_recoverable(&self) -> bool {
         match self {

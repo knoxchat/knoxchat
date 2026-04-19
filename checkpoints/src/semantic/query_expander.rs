@@ -289,9 +289,9 @@ impl QueryExpander {
         let mut variations = Vec::new();
 
         // Plural/singular variations
-        if entity.ends_with('s') {
+        if let Some(stripped) = entity.strip_suffix('s') {
             variations.push(ExpandedEntity {
-                name: entity[..entity.len() - 1].to_string(),
+                name: stripped.to_string(),
                 expansion_reason: ExpansionReason::Synonym,
                 relevance_score: 0.85,
                 relationship_path: vec![entity.to_string()],

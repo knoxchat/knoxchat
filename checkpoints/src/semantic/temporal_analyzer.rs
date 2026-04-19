@@ -176,7 +176,7 @@ impl TemporalAnalyzer {
 
             self.entity_history
                 .entry(entity_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(evolution);
         }
 
@@ -250,7 +250,7 @@ impl TemporalAnalyzer {
 
             self.pattern_history
                 .entry(pattern.name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(evolution);
         }
 
@@ -338,7 +338,7 @@ impl TemporalAnalyzer {
 
         let mut changes = Vec::new();
 
-        for (_, history) in &self.entity_history {
+        for history in self.entity_history.values() {
             for evolution in history {
                 // Find checkpoint index
                 if let Some(checkpoint_pos) = self
@@ -544,7 +544,7 @@ impl TemporalAnalyzer {
             .filter(|(_, count)| *count >= threshold)
             .collect();
 
-        hot_spots.sort_by(|a, b| b.1.cmp(&a.1));
+        hot_spots.sort_by_key(|k| std::cmp::Reverse(k.1));
         hot_spots
     }
 

@@ -3,9 +3,10 @@
 //! This module detects design patterns, anti-patterns, and code smells in the codebase,
 //! providing architectural insights and refactoring recommendations.
 
-use super::knowledge_graph::{GraphNode, KnowledgeGraph, NodeType};
+use super::knowledge_graph::{EdgeType, GraphNode, KnowledgeGraph, NodeType};
 use super::types::*;
 use crate::error::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Pattern detector for design patterns and anti-patterns
@@ -128,7 +129,7 @@ pub enum RecommendationAction {
 }
 
 /// Effort level
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum EffortLevel {
     Trivial,
     Low,
@@ -329,22 +330,140 @@ impl PatternDetector {
 
     /// Detect Observer pattern
     fn detect_observer(&self) -> Result<Vec<DetectedPattern>> {
-        let detected = Vec::new();
-        // Implementation would check for:
-        // - Subject with list of observers
-        // - Notify method
-        // - Observer interface/trait
-        // - Multiple implementations of observer
+        let mut detected = Vec::new();
+        let class_nodes = self.knowledge_graph.get_nodes_by_type(NodeType::Class);
+
+        for node in class_nodes {
+            let mut confidence = 0.0;
+            let name_lower = node.name.to_lowercase();
+
+            // Check naming hints
+            if name_lower.contains("emitter")
+                || name_lower.contains("publisher")
+                || name_lower.contains("eventbus")
+                || name_lower.contains("dispatcher")
+            {
+                confidence += 0.4;
+            }
+
+            // Check metadata for subscribe/emit-like methods
+            let methods = self.get_method_names_from_metadata(&node);
+            if methods.iter().any(|m| {
+                m.contains("subscribe")
+                    || m.contains("addEventListener")
+                    || m.contains("on")
+                    || m.contains("addListener")
+            }) {
+                confidence += 0.3;
+            }
+            if methods.iter().any(|m| {
+                m.contains("emit")
+                    || m.contains("notify")
+                    || m.contains("publish")
+                    || m.contains("dispatch")
+            }) {
+                confidence += 0.3;
+            }
+
+            if confidence >= 0.6 {
+                detected.push(DetectedPattern {
+                    pattern_name: "Observer".to_string(),
+                    pattern_type: PatternType::Observer,
+                    confidence,
+                    entities: vec![PatternEntity {
+                        name: node.name.clone(),
+                        role: "Subject / EventEmitter".to_string(),
+                        location: node.location.clone(),
+                    }],
+                    description: "Defines a one-to-many dependency between objects so that when one changes state, all dependents are notified".to_string(),
+                    benefits: vec![
+                        "Loose coupling between subject and observers".to_string(),
+                        "Supports broadcast communication".to_string(),
+                    ],
+                    drawbacks: vec![
+                        "Can lead to unexpected updates".to_string(),
+                        "Memory leaks if observers aren't removed".to_string(),
+                    ],
+                    recommendation: Some(PatternRecommendation {
+                        action: RecommendationAction::Accept,
+                        reasoning: "Observer pattern is appropriate for event-driven communication".to_string(),
+                        implementation_steps: Vec::new(),
+                        estimated_effort: EffortLevel::Low,
+                    }),
+                });
+            }
+        }
+
         Ok(detected)
     }
 
     /// Detect Strategy pattern
     fn detect_strategy(&self) -> Result<Vec<DetectedPattern>> {
-        let detected = Vec::new();
-        // Implementation would check for:
-        // - Strategy interface
-        // - Multiple implementations
-        // - Context class using strategy
+        let mut detected = Vec::new();
+        let interface_nodes = self.knowledge_graph.get_nodes_by_type(NodeType::Interface);
+
+        for iface in &interface_nodes {
+            let iface_lower = iface.name.to_lowercase();
+            if !iface_lower.contains("strategy")
+                && !iface_lower.contains("policy")
+                && !iface_lower.contains("algorithm")
+                && !iface_lower.contains("handler")
+            {
+                continue;
+            }
+
+            // Look for classes that implement this interface
+            let all_classes = self.knowledge_graph.get_nodes_by_type(NodeType::Class);
+            let implementors: Vec<&GraphNode> = all_classes
+                .iter()
+                .filter(|c| {
+                    self.knowledge_graph
+                        .get_outgoing_edges(&c.id)
+                        .iter()
+                        .any(|e| e.edge_type == EdgeType::Implements && e.to == iface.id)
+                })
+                .collect();
+
+            // Strategy pattern typically has 2+ implementations
+            if implementors.len() >= 2 {
+                let mut entities = vec![PatternEntity {
+                    name: iface.name.clone(),
+                    role: "Strategy Interface".to_string(),
+                    location: iface.location.clone(),
+                }];
+                for imp in &implementors {
+                    entities.push(PatternEntity {
+                        name: imp.name.clone(),
+                        role: "Concrete Strategy".to_string(),
+                        location: imp.location.clone(),
+                    });
+                }
+
+                detected.push(DetectedPattern {
+                    pattern_name: "Strategy".to_string(),
+                    pattern_type: PatternType::Strategy,
+                    confidence: 0.85,
+                    entities,
+                    description: format!(
+                        "Interface {} with {} interchangeable implementations",
+                        iface.name,
+                        implementors.len()
+                    ),
+                    benefits: vec![
+                        "Algorithms can be swapped at runtime".to_string(),
+                        "Open/Closed principle".to_string(),
+                    ],
+                    drawbacks: vec!["Clients must be aware of different strategies".to_string()],
+                    recommendation: Some(PatternRecommendation {
+                        action: RecommendationAction::Accept,
+                        reasoning: "Well-structured strategy pattern".to_string(),
+                        implementation_steps: Vec::new(),
+                        estimated_effort: EffortLevel::Low,
+                    }),
+                });
+            }
+        }
+
         Ok(detected)
     }
 
@@ -492,9 +611,7 @@ impl PatternDetector {
         let function_nodes = self.knowledge_graph.get_nodes_by_type(NodeType::Function);
 
         for node in function_nodes {
-            // Would extract parameter count from actual parsing
-            // For now, placeholder
-            let param_count = 0; // Would be extracted from node metadata
+            let param_count = self.count_parameters(&node);
 
             if param_count > 5 {
                 detected.push(DetectedPattern {
@@ -525,58 +642,306 @@ impl PatternDetector {
         Ok(detected)
     }
 
-    /// Detect Feature Envy
+    /// Detect Feature Envy — a method uses another class's data more than its own
     fn detect_feature_envy(&self) -> Result<Vec<DetectedPattern>> {
-        // Would analyze method calls to other classes
-        // If a method uses another class more than its own, it's feature envy
-        Ok(Vec::new())
+        let mut detected = Vec::new();
+        let function_nodes = self.knowledge_graph.get_nodes_by_type(NodeType::Function);
+
+        for node in function_nodes {
+            let outgoing = self.knowledge_graph.get_outgoing_edges(&node.id);
+
+            // Group call/use edges by target file
+            let mut external_calls: HashMap<String, usize> = HashMap::new();
+            let mut own_file_calls = 0usize;
+
+            for edge in &outgoing {
+                if edge.edge_type == EdgeType::Calls || edge.edge_type == EdgeType::Uses {
+                    if let Some(target) = self.knowledge_graph.get_node(&edge.to) {
+                        if target.file_path == node.file_path {
+                            own_file_calls += 1;
+                        } else {
+                            *external_calls.entry(target.file_path.clone()).or_default() += 1;
+                        }
+                    }
+                }
+            }
+
+            // If any single external file is referenced more than own-file references
+            for (ext_file, ext_count) in &external_calls {
+                if *ext_count > own_file_calls && *ext_count >= 3 {
+                    detected.push(DetectedPattern {
+                        pattern_name: "Feature Envy".to_string(),
+                        pattern_type: PatternType::FeatureEnvy,
+                        confidence: (*ext_count as f64 / (*ext_count + own_file_calls) as f64)
+                            .min(0.95),
+                        entities: vec![PatternEntity {
+                            name: node.name.clone(),
+                            role: "Envious Method".to_string(),
+                            location: node.location.clone(),
+                        }],
+                        description: format!(
+                            "Method {} references {} {} times but its own file only {} times",
+                            node.name, ext_file, ext_count, own_file_calls
+                        ),
+                        benefits: Vec::new(),
+                        drawbacks: vec![
+                            "Suggests the method belongs in another class".to_string(),
+                            "Increases coupling between modules".to_string(),
+                        ],
+                        recommendation: Some(PatternRecommendation {
+                            action: RecommendationAction::Refactor,
+                            reasoning: format!(
+                                "Consider moving this method to {}",
+                                ext_file
+                            ),
+                            implementation_steps: vec![
+                                "Move the method to the class it references most".to_string(),
+                                "Update callers to use the new location".to_string(),
+                            ],
+                            estimated_effort: EffortLevel::Medium,
+                        }),
+                    });
+                    break; // one detection per method
+                }
+            }
+        }
+
+        Ok(detected)
     }
 
-    /// Detect Data Class
+    /// Detect Data Class — classes with fields but no meaningful behaviour
     fn detect_data_class(&self) -> Result<Vec<DetectedPattern>> {
-        // Would check for classes with only getters/setters and no behavior
-        Ok(Vec::new())
+        let mut detected = Vec::new();
+        let class_nodes = self.knowledge_graph.get_nodes_by_type(NodeType::Class);
+
+        for node in class_nodes {
+            let method_count = self.count_methods(&node);
+            let field_count = self.count_fields(&node);
+
+            // A data class has many fields but very few (or only getter/setter) methods
+            if field_count >= 3 && method_count <= field_count {
+                let methods = self.get_method_names_from_metadata(&node);
+                let getter_setter_count = methods
+                    .iter()
+                    .filter(|m| {
+                        m.starts_with("get")
+                            || m.starts_with("set")
+                            || m.starts_with("is")
+                            || m.starts_with("has")
+                    })
+                    .count();
+
+                // Most methods are getters/setters → data class
+                if getter_setter_count >= methods.len().saturating_sub(1) {
+                    detected.push(DetectedPattern {
+                        pattern_name: "Data Class".to_string(),
+                        pattern_type: PatternType::DataClass,
+                        confidence: 0.8,
+                        entities: vec![PatternEntity {
+                            name: node.name.clone(),
+                            role: "Data Class".to_string(),
+                            location: node.location.clone(),
+                        }],
+                        description: format!(
+                            "Class {} has {} fields and {} methods (mostly accessors)",
+                            node.name, field_count, method_count
+                        ),
+                        benefits: Vec::new(),
+                        drawbacks: vec![
+                            "Anemic domain model".to_string(),
+                            "Behavior scattered across other classes".to_string(),
+                        ],
+                        recommendation: Some(PatternRecommendation {
+                            action: RecommendationAction::Review,
+                            reasoning:
+                                "Consider moving related behaviour into this class".to_string(),
+                            implementation_steps: vec![
+                                "Identify methods in other classes that operate on this data"
+                                    .to_string(),
+                                "Move them into this class to create a richer domain model"
+                                    .to_string(),
+                            ],
+                            estimated_effort: EffortLevel::Medium,
+                        }),
+                    });
+                }
+            }
+        }
+
+        Ok(detected)
     }
 
     // Helper methods
 
-    fn has_static_instance(&self, _node: &GraphNode) -> bool {
-        // Would check for static instance field
+    fn has_static_instance(&self, node: &GraphNode) -> bool {
+        // Check metadata for static fields containing "instance"
+        if let Some(fields) = node.metadata.get("fields") {
+            if let Some(arr) = fields.as_array() {
+                return arr.iter().any(|f| {
+                    let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let is_static = f.get("is_static").and_then(|s| s.as_bool()).unwrap_or(false);
+                    is_static && name.to_lowercase().contains("instance")
+                });
+            }
+        }
+        // Fallback: check outgoing edges for a self-typed static field
+        let outgoing = self.knowledge_graph.get_outgoing_edges(&node.id);
+        outgoing
+            .iter()
+            .any(|e| e.edge_type == EdgeType::Contains && e.to.contains("instance"))
+    }
+
+    fn has_private_constructor(&self, node: &GraphNode) -> bool {
+        if let Some(methods) = node.metadata.get("methods") {
+            if let Some(arr) = methods.as_array() {
+                return arr.iter().any(|m| {
+                    let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    let vis = m.get("visibility").and_then(|v| v.as_str()).unwrap_or("");
+                    (name == "constructor" || name == "new") && vis == "private"
+                });
+            }
+        }
         false
     }
 
-    fn has_private_constructor(&self, _node: &GraphNode) -> bool {
-        // Would check for private constructor
-        false
-    }
-
-    fn has_get_instance_method(&self, _node: &GraphNode) -> bool {
-        // Would check for getInstance method
-        false
+    fn has_get_instance_method(&self, node: &GraphNode) -> bool {
+        let methods = self.get_method_names_from_metadata(node);
+        methods.iter().any(|m| {
+            let lower = m.to_lowercase();
+            lower == "getinstance"
+                || lower == "get_instance"
+                || lower == "instance"
+                || lower == "shared"
+        })
     }
 
     fn looks_like_factory(&self, node: &GraphNode) -> bool {
-        node.name.contains("Factory") || node.name.contains("Creator")
+        let lower = node.name.to_lowercase();
+        if lower.contains("factory") || lower.contains("creator") {
+            return true;
+        }
+        // Also check for methods named "create*"
+        let methods = self.get_method_names_from_metadata(node);
+        methods.iter().filter(|m| m.starts_with("create")).count() >= 2
     }
 
-    fn count_methods(&self, _node: &GraphNode) -> usize {
-        // Would count methods in class
-        0
+    fn count_methods(&self, node: &GraphNode) -> usize {
+        // First try metadata
+        if let Some(methods) = node.metadata.get("methods") {
+            if let Some(arr) = methods.as_array() {
+                return arr.len();
+            }
+        }
+        // Fallback: count outgoing Contains edges to Function nodes
+        let outgoing = self.knowledge_graph.get_outgoing_edges(&node.id);
+        outgoing
+            .iter()
+            .filter(|e| {
+                e.edge_type == EdgeType::Contains
+                    && self
+                        .knowledge_graph
+                        .get_node(&e.to)
+                        .map(|n| n.node_type == NodeType::Function)
+                        .unwrap_or(false)
+            })
+            .count()
     }
 
-    fn count_fields(&self, _node: &GraphNode) -> usize {
-        // Would count fields in class
+    fn count_fields(&self, node: &GraphNode) -> usize {
+        // First try metadata
+        if let Some(fields) = node.metadata.get("fields") {
+            if let Some(arr) = fields.as_array() {
+                return arr.len();
+            }
+        }
+        // Fallback: count outgoing Contains edges to Variable/Constant nodes
+        let outgoing = self.knowledge_graph.get_outgoing_edges(&node.id);
+        outgoing
+            .iter()
+            .filter(|e| {
+                e.edge_type == EdgeType::Contains
+                    && self
+                        .knowledge_graph
+                        .get_node(&e.to)
+                        .map(|n| {
+                            n.node_type == NodeType::Variable || n.node_type == NodeType::Constant
+                        })
+                        .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn count_parameters(&self, node: &GraphNode) -> usize {
+        if let Some(params) = node.metadata.get("parameters") {
+            if let Some(arr) = params.as_array() {
+                return arr.len();
+            }
+            if let Some(n) = params.as_u64() {
+                return n as usize;
+            }
+        }
         0
     }
 
     fn count_dependencies(&self, node: &GraphNode) -> usize {
         self.knowledge_graph.get_outgoing_edges(&node.id).len()
     }
+
+    /// Get method names from node metadata
+    fn get_method_names_from_metadata(&self, node: &GraphNode) -> Vec<String> {
+        if let Some(methods) = node.metadata.get("methods") {
+            if let Some(arr) = methods.as_array() {
+                return arr
+                    .iter()
+                    .filter_map(|m| {
+                        m.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+            }
+        }
+        // Fallback: query contained function nodes
+        let outgoing = self.knowledge_graph.get_outgoing_edges(&node.id);
+        outgoing
+            .iter()
+            .filter(|e| e.edge_type == EdgeType::Contains)
+            .filter_map(|e| {
+                self.knowledge_graph.get_node(&e.to).and_then(|n| {
+                    if n.node_type == NodeType::Function {
+                        Some(n.name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantic::knowledge_graph::NodeType;
+    use crate::semantic::types::CodeLocation;
+
+    fn make_graph_node(name: &str, node_type: NodeType, metadata: HashMap<String, serde_json::Value>) -> GraphNode {
+        GraphNode {
+            id: name.to_string(),
+            node_type,
+            name: name.to_string(),
+            file_path: "test.ts".to_string(),
+            location: CodeLocation {
+                file_path: std::path::PathBuf::from("test.ts"),
+                start_line: 1,
+                end_line: 10,
+                start_column: 0,
+                end_column: 0,
+            },
+            metadata,
+            checkpoint_id: None,
+        }
+    }
 
     #[test]
     fn test_detector_creation() {
@@ -589,5 +954,62 @@ mod tests {
     fn test_effort_levels() {
         assert!(EffortLevel::Low < EffortLevel::High);
         assert!(EffortLevel::Trivial < EffortLevel::VeryHigh);
+    }
+
+    #[test]
+    fn test_detect_observer_by_name() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let mut metadata = HashMap::new();
+        metadata.insert("methods".to_string(), serde_json::json!([
+            {"name": "on"}, {"name": "emit"}, {"name": "removeListener"}
+        ]));
+        let node = make_graph_node("EventEmitter", NodeType::Class, metadata);
+        let _ = graph.add_node(node);
+        let detector = PatternDetector::new(graph.clone());
+        let result = detector.detect_observer().unwrap();
+        assert!(!result.is_empty(), "Should detect observer pattern from EventEmitter class name + methods");
+    }
+
+    #[test]
+    fn test_detect_data_class() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let mut metadata = HashMap::new();
+        metadata.insert("fields".to_string(), serde_json::json!(["name", "age", "email", "phone"]));
+        metadata.insert("methods".to_string(), serde_json::json!(["toString"]));
+        let node = make_graph_node("PersonDTO", NodeType::Class, metadata);
+        let _ = graph.add_node(node);
+        let detector = PatternDetector::new(graph.clone());
+        let result = detector.detect_data_class().unwrap();
+        assert!(!result.is_empty(), "Should detect data class (4 fields, 1 method)");
+    }
+
+    #[test]
+    fn test_count_methods_from_metadata() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let detector = PatternDetector::new(graph);
+        let mut metadata = HashMap::new();
+        metadata.insert("methods".to_string(), serde_json::json!(["a", "b", "c"]));
+        let node = make_graph_node("TestClass", NodeType::Class, metadata);
+        assert_eq!(detector.count_methods(&node), 3);
+    }
+
+    #[test]
+    fn test_count_fields_from_metadata() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let detector = PatternDetector::new(graph);
+        let mut metadata = HashMap::new();
+        metadata.insert("fields".to_string(), serde_json::json!(["x", "y"]));
+        let node = make_graph_node("TestClass", NodeType::Class, metadata);
+        assert_eq!(detector.count_fields(&node), 2);
+    }
+
+    #[test]
+    fn test_looks_like_factory() {
+        let graph = Arc::new(KnowledgeGraph::new());
+        let detector = PatternDetector::new(graph);
+        let mut metadata = HashMap::new();
+        metadata.insert("methods".to_string(), serde_json::json!(["createButton", "createInput", "destroy"]));
+        let node = make_graph_node("WidgetFactory", NodeType::Class, metadata);
+        assert!(detector.looks_like_factory(&node), "Should detect factory pattern from name + create* methods");
     }
 }

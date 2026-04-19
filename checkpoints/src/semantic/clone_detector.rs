@@ -268,7 +268,7 @@ impl CloneDetector {
         for fragment in fragments {
             hash_map
                 .entry(fragment.token_hash)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(fragment);
         }
 
@@ -343,10 +343,89 @@ impl CloneDetector {
     }
 
     /// Find semantic clones (Type 4)
-    fn find_semantic_clones(&self, _fragments: &[CodeFragment]) -> Result<Vec<CodeClone>> {
-        // Semantic clone detection requires deeper analysis (AST comparison, data flow, etc.)
-        // This is a placeholder for future ML-based implementation
-        Ok(Vec::new())
+    ///
+    /// Uses a token-pattern approach: normalise all identifiers to placeholders,
+    /// then group fragments whose normalised token sequences match.
+    fn find_semantic_clones(&self, fragments: &[CodeFragment]) -> Result<Vec<CodeClone>> {
+        let mut clones = Vec::new();
+
+        // Build a map from normalised-token-pattern → fragments
+        let mut pattern_map: HashMap<String, Vec<&CodeFragment>> = HashMap::new();
+
+        for frag in fragments {
+            let pattern = self.semantic_normalize(&frag.content);
+            pattern_map.entry(pattern).or_default().push(frag);
+        }
+
+        for group in pattern_map.values() {
+            if group.len() >= 2 {
+                // Avoid duplicating exact clones already found via hash
+                let hashes: HashSet<u64> = group.iter().map(|f| f.token_hash).collect();
+                if hashes.len() == 1 {
+                    continue; // already caught by Type-1
+                }
+
+                clones.push(CodeClone {
+                    clone_type: CloneType::Type4Semantic,
+                    fragments: group.iter().map(|f| (*f).clone()).collect(),
+                    similarity_score: 0.9,
+                    refactoring_suggestion: Some(
+                        self.suggest_refactoring(&CloneType::Type4Semantic, group),
+                    ),
+                });
+            }
+        }
+
+        Ok(clones)
+    }
+
+    /// Normalise code semantically: replace all identifier-like tokens with a
+    /// positional placeholder so that structurally equivalent code with
+    /// different names produces the same pattern string.
+    fn semantic_normalize(&self, code: &str) -> String {
+        let mut counter = 0u32;
+        let mut id_map: HashMap<String, String> = HashMap::new();
+        let mut result = Vec::new();
+
+        // Keywords that should NOT be replaced
+        let keywords: HashSet<&str> = [
+            "function", "fn", "def", "class", "struct", "trait", "impl", "if", "else", "for",
+            "while", "return", "let", "const", "var", "pub", "mut", "async", "await",
+            "import", "export", "from", "true", "false", "null", "undefined", "None",
+            "self", "this", "new", "static", "void", "int", "str", "bool", "float",
+        ]
+        .iter()
+        .copied()
+        .collect();
+
+        for line in code.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
+                continue;
+            }
+            let mut out_tokens = Vec::new();
+            for token in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if token.is_empty() {
+                    continue;
+                }
+                if keywords.contains(token)
+                    || token.chars().all(|c| c.is_ascii_digit())
+                {
+                    out_tokens.push(token.to_string());
+                } else {
+                    let placeholder = id_map
+                        .entry(token.to_string())
+                        .or_insert_with(|| {
+                            counter += 1;
+                            format!("_V{}_", counter)
+                        })
+                        .clone();
+                    out_tokens.push(placeholder);
+                }
+            }
+            result.push(out_tokens.join(" "));
+        }
+        result.join("\n")
     }
 
     /// Check if fragment is valid for analysis
@@ -415,7 +494,7 @@ impl CloneDetector {
         }
     }
 
-    /// Suggest refactoring based on clone type
+    /// Suggest refactoring based on clone type and concrete fragments
     fn suggest_refactoring(
         &self,
         clone_type: &CloneType,
@@ -428,19 +507,44 @@ impl CloneDetector {
         };
 
         let total_lines: usize = fragments.iter().map(|f| f.end_line - f.start_line).sum();
+        let file_set: HashSet<&str> = fragments.iter().map(|f| f.file_path.as_str()).collect();
+        let cross_file = file_set.len() > 1;
+
+        let mut notes = Vec::new();
+        match clone_type {
+            CloneType::Type1Exact => {
+                notes.push("Extract the duplicated block into a single shared function".to_string());
+                if cross_file {
+                    notes.push(format!(
+                        "Consider placing the shared function in a common utility module (spans {} files)",
+                        file_set.len()
+                    ));
+                }
+                notes.push("Replace each occurrence with a call to the new function".to_string());
+            }
+            CloneType::Type2Renamed => {
+                notes.push("Extract common logic into a parameterised function".to_string());
+                notes.push("Pass renamed identifiers as parameters".to_string());
+            }
+            CloneType::Type3NearMiss => {
+                notes.push("Identify the varying parts and extract them as parameters or callbacks".to_string());
+                notes.push("Apply the Template Method or Strategy pattern if the variation is behavioural".to_string());
+            }
+            CloneType::Type4Semantic => {
+                notes.push("Consolidate equivalent implementations into a single canonical version".to_string());
+                notes.push("Choose the clearest / most performant variant as the base".to_string());
+            }
+        }
+        notes.push("Add tests to cover the refactored code".to_string());
 
         RefactoringSuggestion {
             strategy,
             estimated_benefit: EstimatedBenefit {
                 lines_saved: total_lines / 2,
-                maintainability_improvement: 0.3,
-                test_coverage_improvement: 0.1,
+                maintainability_improvement: if cross_file { 0.5 } else { 0.3 },
+                test_coverage_improvement: 0.15,
             },
-            implementation_notes: vec![
-                "Extract common logic into shared function".to_string(),
-                "Update all call sites".to_string(),
-                "Add appropriate tests".to_string(),
-            ],
+            implementation_notes: notes,
         }
     }
 
@@ -485,7 +589,7 @@ impl CloneDetector {
                 affected_files,
                 estimated_effort: effort,
                 estimated_impact: impact,
-                priority: self.calculate_priority(&clone),
+                priority: self.calculate_priority(clone),
             });
         }
 
@@ -537,10 +641,59 @@ mod tests {
     #[test]
     fn test_is_valid_fragment() {
         let detector = CloneDetector::new();
-        let valid = "fn test() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n    let a = 4;\n    let b = 5;\n}";
+        // Need >= 6 lines and >= 50 tokens to be valid
+        let valid = "fn test() {\n    let x = compute_value(1);\n    let y = compute_value(2);\n    let z = compute_value(3);\n    let a = compute_value(4);\n    let b = compute_value(5);\n    let c = compute_value(6);\n    let d = compute_value(7);\n    let result = x + y + z + a + b + c + d;\n    println!(\"result is {}\", result);\n    return result;\n}";
         assert!(detector.is_valid_fragment(valid));
 
         let invalid = "fn test() { }";
         assert!(!detector.is_valid_fragment(invalid));
+    }
+
+    #[test]
+    fn test_semantic_normalize() {
+        let detector = CloneDetector::new();
+        let code_a = "function processUser(user) {\n    let name = user.name;\n    let age = user.age;\n    console.log(name);\n    console.log(age);\n    return name;\n}";
+        let code_b = "function handleItem(item) {\n    let title = item.title;\n    let count = item.count;\n    console.log(title);\n    console.log(count);\n    return title;\n}";
+        let norm_a = detector.semantic_normalize(code_a);
+        let norm_b = detector.semantic_normalize(code_b);
+        // After semantic normalization, structurally identical code should produce the same output
+        assert_eq!(norm_a, norm_b, "Structurally identical code should normalize the same");
+    }
+
+    #[test]
+    fn test_exact_clone_detection() {
+        let mut detector = CloneDetector::new();
+        // Must have >= 6 lines and >= 50 tokens to produce valid fragments
+        let code = r#"function doWork(input, context) {
+    let x = input.getValue();
+    let y = input.getScore();
+    let z = x + y;
+    let w = z * 2;
+    let result = process(w, x, y, context);
+    let output = transform(result, context);
+    let formatted = format(output, "default");
+    console.log(formatted, result, output);
+    console.log(w, z, x, y);
+    validate(formatted, output, result);
+    return formatted;
+}"#;
+        let files = vec![
+            ("a.ts".to_string(), code.to_string()),
+            ("b.ts".to_string(), code.to_string()),
+        ];
+        let result = detector.detect_clones(&files).unwrap();
+        assert!(result.total_clones > 0, "Should detect clones for identical code");
+    }
+
+    #[test]
+    fn test_no_clones_for_different_code() {
+        let mut detector = CloneDetector::new();
+        let files = vec![
+            ("a.ts".to_string(), "function foo() { return 1; }".to_string()),
+            ("b.ts".to_string(), "class Bar { run() { console.log('hello'); } }".to_string()),
+        ];
+        let result = detector.detect_clones(&files).unwrap();
+        // Different code should produce no clones
+        assert_eq!(result.total_clones, 0, "Should not detect clones for different code");
     }
 }
