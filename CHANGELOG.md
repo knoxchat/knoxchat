@@ -1,3 +1,199 @@
+## V1.1.2
+
+### Improvements
+
+- knoxdev-package implementaion:  Speed up loading time faster
+
+### Fix Bugs
+
+- Fix 1 — The double-response bug in webviewProtocol.ts
+- Fix 2 — Make the GUI retry treat
+
+## V1.1.1
+
+### Fix Bugs
+
+- Stale backend session
+- Optimistic session too eager
+- Missing backend reset protocol
+
+### Improvements
+
+- Agent mode code generation in real-time streaming
+- GenericCodePreview Polish
+- Middleware Hardening
+- Tool call UX
+
+## V1.1.0
+
+### New Feature
+
+- Knox Memory System (Knox-MS)
+- Knox-MS as a tool calling [Read More >>>](https://docs.knox.chat/blog/memory-brain)
+
+### Improvement
+
+- Todo/Task System UI/UX
+
+### Upgrade
+
+- "vite": "^8.0.3"
+- "typescript": "^6.0.2"
+
+## V1.0.2
+
+- Fix terminal auto-scroll behavior
+- Context Compaction System — conversation summarization, token budget management, smart pruning, and deduplication
+- Fix Diagnostic Fix Manager — real LLM-powered fix generation replacing stub
+- Agentic Auto-Verification Loop — automatic diagnostics check and self-correction after code edits
+- Smart Auto-Context — automatic relevant file selection based on query analysis
+- Todo Planning Enhancement — pre-execution plan generation with auto-proceed and progress tracking
+- Rules System (.knoxrules) — hierarchical rule discovery and merging with template variables
+- Persistent Project Memory — SQLite-backed memory store with convention extraction and @memory context provider
+- Multi-File Apply-All — batch accept/reject across all pending diffs
+- Enhanced Terminal Integration — real-time error detection with 20+ pattern matchers via shell integration API
+- Token Usage & Cost Dashboard — per-model pricing, cost calculation, and enriched stats endpoint
+- Complete MCP Notification Handlers — tool, prompt, resource, and logging notification registration
+- Fix Config Model Selection — chat and summarize roles now participate in model rectification
+- Screenshot Capture Command — OS-native screen capture injected into chat input
+- Git Workflow Enhancement — conventional commits, /pr description generator, /changelog from git history
+
+
+## V1.0.0
+
+### Add Skills System
+
+### LSP Tool Improvement
+
+### Todo/Task System Optimizations
+
+Progress is now tracked by observing ACTUAL tool executions (file edits, terminal commands, searches) and semantically matching them to planned todo items.
+
+**Architecture:**
+```
+callTool.ts  ──(ToolCallEvent)──→  todoStreamSync.ts  ──(completeTodo)──→  TodoManager.ts
+                                        │                                      │
+                                   Evidence Scoring                      Parse Metadata
+                                   Multi-Signal Match                   (verified, score,
+                                   Per-Todo Accumulation                 toolCallCount)
+                                        │                                      │
+                                        ▼                                      ▼
+                                   planTaskSlice  ←──(session update)──  IDE Protocol
+                                        │
+                                        ▼
+                              PlanTaskStatusPanel (UI)
+                              TodoPanel (UI)
+                              Verification Badges
+```
+
+### Tools Implementation
+
+- GUI callTool thunk (retry with backoff)
+  - → IPC → core.ts tools/call handler (structured error logging)
+    - → callTool() with middleware:
+    - 1. Argument parse + JSON repair
+    - 2. Input validation (required params)
+    - 3. Circuit breaker check
+    - 4. File write lock (if applicable)
+    - 5. Execute with timeout + retry (exponential backoff + jitter)
+    - 6. Performance metrics collection
+      - → VsCodeIde (retry + timeout at I/O level)
+
+### No macos-x64 support anymore
+
+### Package Update
+
+- "@tiptap/core": "^3.20.0"
+- "axios": "^1.13.6"
+- "engines": {
+    "vscode": "^1.109.0",
+    "node": ">=22.22.0"
+  }
+- "esbuild": "0.27.3"
+- "onnxruntime-common": "1.24.2"
+- "onnxruntime-web": "1.24.2"
+- "react": "^19.2.4"
+- "typescript": "^5.9.3"
+- "uuid": "^13.0.0"
+- "vite": "^7.3.1"
+- "web-tree-sitter": "^0.26.6"
+- "zod": "^4.3.6"
+
+### Crates Update
+```toml
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+dirs = "6.0.0"
+uuid = { version = "1.21.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+# File system and async
+tokio = { version = "1.49.0", features = ["full"] }
+walkdir = "2.5.0"
+ignore = "0.4.25"
+notify = "8.2.0"
+
+# Compression and encoding
+flate2 = "1.1.9"
+base64 = "0.22.1"
+lz4_flex = "0.12.0"
+
+# Error handling
+thiserror = "2.0.18"
+anyhow = "1.0.102"
+
+# Node.js bindings - Updated to latest version
+neon = { version = "1.1.1", default-features = false, features = ["napi-6"] }
+
+# Additional dependencies
+once_cell = "1.21.3"
+parking_lot = "0.12.5"
+dashmap = "6.1.0"
+regex = "1.12.3"
+rayon = "1.11.0"
+
+# Logging
+log = "0.4.29"
+env_logger = "0.11.9"
+
+# Security and encryption
+ring = "0.17.14"
+argon2 = "0.5.3"
+
+# Monitoring and metrics
+prometheus = "0.14.0"
+
+# Configuration
+config = "0.15.19"
+toml = "1.0.3"
+
+# System utilities
+num_cpus = "1.17.0"
+
+# Additional dependencies for production features
+reqwest = { version = "0.13.2", features = ["json"] }
+futures = "0.3.32"
+
+# Tree-sitter for semantic analysis
+tree-sitter = "0.26.6"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-rust = "0.24.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+
+# Dev dependencies
+tempfile = "3.26.0"
+criterion = "0.8.2"
+```
+### Terminal Beautify
+
 ## V0.9.9
 
 - Add Kmox-MS status - A human-brain-inspired memory architecture with hierarchical memory levels, autonomous execution, and intelligent context management that enables effectively unlimited context windows
