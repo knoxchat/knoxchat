@@ -1,0 +1,51 @@
+{
+  "name": "knoxdev-package",
+  "version": "2.0.0",
+  "description": "Knox unified package: config-types, config-yaml, fetch, openai-adapters",
+  "type": "module",
+  "exports": {
+    "./config-types": {
+      "types": "./dist/config-types/index.d.ts",
+      "import": "./dist/config-types/index.js"
+    },
+    "./config-yaml": {
+      "types": "./dist/config-yaml/index.d.ts",
+      "import": "./dist/config-yaml/index.js"
+    },
+    "./fetch": {
+      "types": "./dist/fetch/index.d.ts",
+      "import": "./dist/fetch/index.js"
+    },
+    "./openai-adapters": {
+      "types": "./dist/openai-adapters/index.d.ts",
+      "import": "./dist/openai-adapters/index.js"
+    },
+    "./openai-adapters/apis/base": {
+      "types": "./dist/openai-adapters/apis/base.d.ts",
+      "import": "./dist/openai-adapters/apis/base.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "author": "Knoxdev",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "follow-redirects": "^1.16.0",
+    "http-proxy-agent": "^9.0.0",
+    "https-proxy-agent": "^9.0.0",
+    "json-schema": "^0.4.0",
+    "node-fetch": "^3.3.2",
+    "openai": "^6.34.0",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/follow-redirects": "^1.14.4",
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  }
+}
