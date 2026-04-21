@@ -800,6 +800,20 @@ impl CheckpointManager {
     pub fn get_performance_metrics(&self) -> PerformanceMetrics {
         let perf = self.performance_tracker.read();
 
+        // Pull persisted system-level metrics from DB and merge with in-memory
+        // operation timings gathered during this process lifetime.
+        let db_perf = self
+            .database
+            .get_stats()
+            .map(|s| s.performance)
+            .unwrap_or(PerformanceMetrics {
+                avg_creation_time_ms: 0.0,
+                avg_restoration_time_ms: 0.0,
+                db_queries_per_second: 0.0,
+                file_io_mbps: 0.0,
+                memory_usage_mb: 0.0,
+            });
+
         let avg_creation_time = if perf.checkpoint_creation_times.is_empty() {
             0.0
         } else {
@@ -816,9 +830,9 @@ impl CheckpointManager {
         PerformanceMetrics {
             avg_creation_time_ms: avg_creation_time,
             avg_restoration_time_ms: avg_restoration_time,
-            db_queries_per_second: 1000.0, // Placeholder
-            file_io_mbps: 100.0,           // Placeholder
-            memory_usage_mb: 50.0,         // Placeholder
+            db_queries_per_second: db_perf.db_queries_per_second,
+            file_io_mbps: db_perf.file_io_mbps,
+            memory_usage_mb: db_perf.memory_usage_mb,
         }
     }
 

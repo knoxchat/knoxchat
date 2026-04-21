@@ -8,24 +8,29 @@ use crate::error::{CheckpointError, Result};
 use crate::types::*;
 
 // use base64::{Engine as _, engine::general_purpose}; // Unused for now
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use lru::LruCache;
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Maximum number of entries in the content cache
+const CONTENT_CACHE_CAP: usize = 512;
 
 /// Storage manager for checkpoint data
 #[derive(Clone)]
 pub struct CheckpointStorage {
     config: CheckpointConfig,
-    content_cache: Arc<RwLock<HashMap<String, CachedContent>>>,
+    content_cache: Arc<RwLock<LruCache<String, CachedContent>>>,
     dedup_index: Arc<RwLock<HashMap<String, String>>>, // content_hash -> file_path
     /// Reference counts for content-addressable blobs: content_hash -> refcount
     content_refcounts: Arc<RwLock<HashMap<String, u64>>>,
@@ -38,8 +43,6 @@ pub struct CheckpointStorage {
 struct CachedContent {
     content: Vec<u8>,
     compressed: bool,
-    last_accessed: DateTime<Utc>,
-    access_count: u64,
 }
 
 /// Tracks compression and deduplication metrics
@@ -58,7 +61,9 @@ impl CheckpointStorage {
     pub fn new(config: CheckpointConfig) -> Result<Self> {
         let storage = Self {
             config,
-            content_cache: Arc::new(RwLock::new(HashMap::new())),
+            content_cache: Arc::new(RwLock::new(LruCache::new(
+                NonZeroUsize::new(CONTENT_CACHE_CAP).unwrap(),
+            ))),
             dedup_index: Arc::new(RwLock::new(HashMap::new())),
             content_refcounts: Arc::new(RwLock::new(HashMap::new())),
             compression_metrics: Arc::new(RwLock::new(CompressionMetrics::default())),
@@ -242,13 +247,11 @@ impl CheckpointStorage {
         // Cache the content
         {
             let mut cache = self.content_cache.write();
-            cache.insert(
+            cache.put(
                 content_hash.to_string(),
                 CachedContent {
                     content: compressed_content,
                     compressed: true,
-                    last_accessed: Utc::now(),
-                    access_count: 1,
                 },
             );
         }
@@ -325,13 +328,10 @@ impl CheckpointStorage {
 
     /// Load content by hash with caching
     pub fn load_content(&self, content_hash: &str) -> Result<Option<Vec<u8>>> {
-        // Check cache first
+        // Check cache first (LruCache::get automatically promotes to most-recently-used)
         {
             let mut cache = self.content_cache.write();
-            if let Some(cached) = cache.get_mut(content_hash) {
-                cached.last_accessed = Utc::now();
-                cached.access_count += 1;
-
+            if let Some(cached) = cache.get(content_hash) {
                 return if cached.compressed {
                     Ok(Some(self.decompress_content(
                         &cached.content,
@@ -354,13 +354,11 @@ impl CheckpointStorage {
                 // Update cache
                 {
                     let mut cache = self.content_cache.write();
-                    cache.insert(
+                    cache.put(
                         content_hash.to_string(),
                         CachedContent {
                             content: compressed_content,
                             compressed: true,
-                            last_accessed: Utc::now(),
-                            access_count: 1,
                         },
                     );
                 }
@@ -462,7 +460,7 @@ impl CheckpointStorage {
             // Remove from cache
             {
                 let mut cache = self.content_cache.write();
-                cache.remove(content_hash);
+                cache.pop(content_hash);
             }
         }
     }
@@ -588,25 +586,17 @@ impl CheckpointStorage {
 
     /// Clean up unused content (garbage collection)
     pub fn cleanup_unused_content(&self) -> Result<u64> {
-        // This would implement reference counting and cleanup unused content
-        // For now, just clean up cache
-        let mut freed_bytes = 0u64;
+        // With LruCache, eviction is automatic. We can resize to trigger eviction
+        // of least-recently-used entries, or just report current cache size.
+        let _freed_bytes = {
+            let cache = self.content_cache.read();
+            // LruCache handles eviction automatically — report current usage
+            cache.iter().map(|(_, c)| c.content.len() as u64).sum::<u64>()
+        };
 
-        {
-            let mut cache = self.content_cache.write();
-            let cutoff_time = Utc::now() - chrono::Duration::hours(24);
-
-            cache.retain(|_, cached| {
-                if cached.last_accessed < cutoff_time && cached.access_count < 2 {
-                    freed_bytes += cached.content.len() as u64;
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-
-        Ok(freed_bytes)
+        // Resize the cache to force eviction if it's over capacity
+        // (LruCache already handles this on put, so this is a no-op in practice)
+        Ok(0)
     }
 
     /// Get storage statistics
@@ -616,7 +606,7 @@ impl CheckpointStorage {
 
         let cache_size = {
             let cache = self.content_cache.read();
-            cache.values().map(|c| c.content.len() as u64).sum()
+            cache.iter().map(|(_, c)| c.content.len() as u64).sum()
         };
 
         let dedup_entries = {

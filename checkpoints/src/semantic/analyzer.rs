@@ -5,7 +5,7 @@ use super::relationship_mapper::RelationshipMapper;
 use super::symbol_extractor::SymbolExtractor;
 use super::types::*;
 use crate::error::{CheckpointError, Result};
-use crate::types::FileChange;
+use crate::types::{ChangeType, FileChange};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -597,34 +597,259 @@ impl SemanticAnalyzer {
 
     fn identify_new_patterns(
         &self,
-        _file_changes: &[FileChange],
-        _semantic_context: &SemanticContext,
+        file_changes: &[FileChange],
+        semantic_context: &SemanticContext,
     ) -> Result<Vec<DetectedPattern>> {
-        Ok(Vec::new())
+        let mut patterns = Vec::new();
+
+        // Detect Singleton pattern: classes with getInstance method
+        for (name, class_def) in &semantic_context.classes {
+            let methods_lower: Vec<String> = class_def.methods.iter().map(|m| m.to_lowercase()).collect();
+            let has_get_instance = methods_lower.iter().any(|m| {
+                m.contains("getinstance") || m.contains("get_instance")
+            });
+            let has_private_ctor = methods_lower.iter().any(|m| m == "constructor");
+
+            if has_get_instance {
+                let mut confidence = 0.4;
+                if has_private_ctor { confidence += 0.3; }
+                if has_get_instance { confidence += 0.3; }
+
+                patterns.push(DetectedPattern {
+                    name: format!("Singleton: {}", name),
+                    pattern: DesignPattern::Singleton,
+                    confidence,
+                    locations: vec![format!("{}:{}", class_def.location.file_path.display(), class_def.location.start_line)],
+                    description: Some(format!("Class '{}' implements the Singleton pattern", name)),
+                });
+            }
+        }
+
+        // Detect Factory pattern: functions with "factory", "create", "build" in name
+        for (name, func_def) in &semantic_context.functions {
+            let lower = name.to_lowercase();
+            if lower.contains("factory") || lower.starts_with("create") || lower.starts_with("build") {
+                patterns.push(DetectedPattern {
+                    name: format!("Factory: {}", name),
+                    pattern: DesignPattern::Factory,
+                    confidence: 0.7,
+                    locations: vec![format!("{}:{}", func_def.location.file_path.display(), func_def.location.start_line)],
+                    description: Some(format!("Function '{}' appears to be a factory method", name)),
+                });
+            }
+        }
+
+        // Detect Observer pattern: classes with subscribe/on/emit/addEventListener
+        for (name, class_def) in &semantic_context.classes {
+            let methods_lower: Vec<String> = class_def.methods.iter().map(|m| m.to_lowercase()).collect();
+            let has_subscribe = methods_lower.iter().any(|m| {
+                m.contains("subscribe") || m.contains("addeventlistener") || m == "on"
+            });
+            let has_emit = methods_lower.iter().any(|m| {
+                m.contains("emit") || m.contains("notify") || m.contains("publish") || m.contains("dispatch")
+            });
+
+            if has_subscribe && has_emit {
+                patterns.push(DetectedPattern {
+                    name: format!("Observer: {}", name),
+                    pattern: DesignPattern::Observer,
+                    confidence: 0.8,
+                    locations: vec![format!("{}:{}", class_def.location.file_path.display(), class_def.location.start_line)],
+                    description: Some(format!("Class '{}' implements the Observer/EventEmitter pattern", name)),
+                });
+            }
+        }
+
+        // Detect new external dependency additions from imports
+        for import in &semantic_context.imports {
+            let module = &import.module;
+            if !module.starts_with('.') && !module.starts_with('/') {
+                let is_new_file = file_changes.iter().any(|fc| {
+                    fc.change_type == ChangeType::Created
+                });
+                if is_new_file {
+                    patterns.push(DetectedPattern {
+                        name: format!("External dependency: {}", module),
+                        pattern: DesignPattern::Custom(format!("ExternalDep:{}", module)),
+                        confidence: 0.6,
+                        locations: vec![module.clone()],
+                        description: Some(format!("New external dependency '{}' introduced", module)),
+                    });
+                }
+            }
+        }
+
+        Ok(patterns)
     }
 
     fn identify_modified_patterns(
         &self,
-        _file_changes: &[FileChange],
-        _semantic_context: &SemanticContext,
+        file_changes: &[FileChange],
+        semantic_context: &SemanticContext,
     ) -> Result<Vec<DetectedPattern>> {
-        Ok(Vec::new())
+        let mut patterns = Vec::new();
+
+        for fc in file_changes {
+            if fc.change_type != ChangeType::Modified {
+                continue;
+            }
+
+            let path_str = fc.path.to_string_lossy().to_string();
+
+            for (name, class_def) in &semantic_context.classes {
+                if class_def.location.file_path.to_string_lossy() == path_str {
+                    let lower = name.to_lowercase();
+                    if lower.contains("service") || lower.contains("repository") || lower.contains("controller") {
+                        let pattern_type = if lower.contains("service") {
+                            DesignPattern::ServiceLayer
+                        } else if lower.contains("repository") {
+                            DesignPattern::Repository
+                        } else {
+                            DesignPattern::MVC
+                        };
+
+                        patterns.push(DetectedPattern {
+                            name: format!("Modified pattern: {}", name),
+                            pattern: pattern_type,
+                            confidence: 0.6,
+                            locations: vec![format!("{}:{}", path_str, class_def.location.start_line)],
+                            description: Some(format!("Architectural pattern class '{}' was modified", name)),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(patterns)
     }
 
     fn analyze_dependency_changes(
         &self,
-        _file_changes: &[FileChange],
-        _semantic_context: &SemanticContext,
+        file_changes: &[FileChange],
+        semantic_context: &SemanticContext,
     ) -> Result<Vec<DependencyChange>> {
-        Ok(Vec::new())
+        let mut changes = Vec::new();
+
+        // Analyze imports in new/modified files to detect dependency additions
+        for fc in file_changes {
+            if fc.change_type == ChangeType::Deleted {
+                // Deleted file = potential dependency removal
+                let path_str = fc.path.to_string_lossy().to_string();
+                changes.push(DependencyChange {
+                    change_type: DependencyChangeType::Removed,
+                    dependency: path_str.clone(),
+                    impact: "File deleted — dependents may break".to_string(),
+                    reasoning: format!("File '{}' was deleted", path_str),
+                });
+                continue;
+            }
+
+            // Check imports in the current semantic context for this file
+            for import in &semantic_context.imports {
+                let is_external = !import.module.starts_with('.') && !import.module.starts_with('/');
+
+                if fc.change_type == ChangeType::Created {
+                    changes.push(DependencyChange {
+                        change_type: DependencyChangeType::Added,
+                        dependency: import.module.clone(),
+                        impact: if is_external {
+                            "New external dependency added".to_string()
+                        } else {
+                            "New internal dependency added".to_string()
+                        },
+                        reasoning: format!("Import '{}' introduced in new file", import.module),
+                    });
+                }
+            }
+        }
+
+        // Check for circular dependencies
+        let edges = &semantic_context.dependency_graph.edges;
+        for edge in edges {
+            // Simple cycle detection: A → B and B → A
+            let reverse_exists = edges.iter().any(|e| {
+                e.from == edge.to && e.to == edge.from
+            });
+            if reverse_exists && edge.from < edge.to {
+                changes.push(DependencyChange {
+                    change_type: DependencyChangeType::Modified,
+                    dependency: format!("{} <-> {}", edge.from, edge.to),
+                    impact: "Circular dependency detected".to_string(),
+                    reasoning: format!("Bidirectional dependency between '{}' and '{}'", edge.from, edge.to),
+                });
+            }
+        }
+
+        Ok(changes)
     }
 
     fn analyze_boundary_changes(
         &self,
-        _file_changes: &[FileChange],
+        file_changes: &[FileChange],
         _semantic_context: &SemanticContext,
     ) -> Result<Vec<BoundaryChange>> {
-        Ok(Vec::new())
+        let mut changes = Vec::new();
+
+        // Detect boundary changes based on file path patterns
+        let mut modules_touched: HashMap<String, Vec<&FileChange>> = HashMap::new();
+        for fc in file_changes {
+            let path_str = fc.path.to_string_lossy().to_string();
+            // Extract module from path (first directory component)
+            let parts: Vec<&str> = path_str.split('/').collect();
+            if parts.len() >= 2 {
+                modules_touched
+                    .entry(parts[0].to_string())
+                    .or_default()
+                    .push(fc);
+            }
+        }
+
+        // If changes span multiple modules, a module boundary may be crossed
+        if modules_touched.len() > 1 {
+            let module_names: Vec<String> = modules_touched.keys().cloned().collect();
+            changes.push(BoundaryChange {
+                boundary_type: BoundaryType::ModuleBoundary,
+                change_description: format!(
+                    "Changes span {} modules: {}",
+                    module_names.len(),
+                    module_names.join(", ")
+                ),
+                impact: "Cross-module changes may affect module interfaces".to_string(),
+            });
+        }
+
+        // Detect layer boundary crossings
+        let layers: Vec<&str> = file_changes
+            .iter()
+            .filter_map(|fc| {
+                let p = fc.path.to_string_lossy().to_lowercase();
+                if p.contains("controller") || p.contains("view") || p.contains("component") {
+                    Some("presentation")
+                } else if p.contains("service") || p.contains("usecase") {
+                    Some("application")
+                } else if p.contains("model") || p.contains("entity") || p.contains("domain") {
+                    Some("domain")
+                } else if p.contains("repo") || p.contains("database") || p.contains("db") {
+                    Some("data")
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let unique_layers: std::collections::HashSet<&&str> = layers.iter().collect();
+        if unique_layers.len() > 1 {
+            changes.push(BoundaryChange {
+                boundary_type: BoundaryType::LayerBoundary,
+                change_description: format!(
+                    "Changes cross {} architectural layers",
+                    unique_layers.len()
+                ),
+                impact: "Cross-layer changes may violate layered architecture constraints".to_string(),
+            });
+        }
+
+        Ok(changes)
     }
 
     fn assess_architectural_significance(

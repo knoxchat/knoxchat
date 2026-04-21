@@ -298,6 +298,10 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
         "getCheckpointStats",
         crate::bindings_simple::get_checkpoint_stats,
     )?;
+    cx.export_function(
+        "runStorageGc",
+        crate::bindings_simple::run_storage_gc,
+    )?;
 
     // Smart checkpoint system functions
     cx.export_function(
@@ -327,6 +331,18 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function(
         "analyzeSemantics",
         crate::bindings_simple::analyze_semantics,
+    )?;
+    cx.export_function(
+        "analyzeCheckpointDiff",
+        crate::bindings_simple::analyze_checkpoint_diff,
+    )?;
+    cx.export_function(
+        "getSymbolMap",
+        crate::bindings_simple::get_symbol_map,
+    )?;
+    cx.export_function(
+        "getDependencyGraph",
+        crate::bindings_simple::get_dependency_graph,
     )?;
 
     // Phase 8.1: Incremental Checkpointing

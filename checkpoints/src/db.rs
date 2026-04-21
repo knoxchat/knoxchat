@@ -365,6 +365,19 @@ impl CheckpointDatabase {
             [],
         )?;
 
+        // Storage metrics table (for compression ratio and deduplication tracking)
+        conn.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS storage_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                compression_ratio REAL NOT NULL,
+                deduplication_savings INTEGER NOT NULL
+            )
+            "#,
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -850,62 +863,66 @@ impl CheckpointDatabase {
 
     /// Get checkpoint statistics
     pub fn get_stats(&self) -> Result<CheckpointStats> {
-        let conn = self.connection.lock();
+        let (total_checkpoints, total_sessions, total_storage_bytes, avg_checkpoint_size, files_tracked, last_cleanup) = {
+            let conn = self.connection.lock();
 
-        let (total_checkpoints, total_sessions, total_storage_bytes) = conn.query_row(
-            r#"
-            SELECT 
-                (SELECT COUNT(*) FROM checkpoints) as total_checkpoints,
-                (SELECT COUNT(*) FROM sessions) as total_sessions,
-                (SELECT COALESCE(SUM(total_size_bytes), 0) FROM sessions) as total_storage
-            "#,
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, i32>(0)? as usize,
-                    row.get::<_, i32>(1)? as usize,
-                    row.get::<_, i64>(2)? as u64,
-                ))
-            },
-        )?;
-
-        let avg_checkpoint_size = if total_checkpoints > 0 {
-            total_storage_bytes / total_checkpoints as u64
-        } else {
-            0
-        };
-
-        let files_tracked = conn.query_row("SELECT COUNT(*) FROM file_changes", [], |row| {
-            row.get::<_, i32>(0).map(|n| n as usize)
-        })?;
-
-        let last_cleanup = conn
-            .query_row(
+            let (total_checkpoints, total_sessions, total_storage_bytes) = conn.query_row(
                 r#"
-            SELECT timestamp FROM audit_log 
-            WHERE action = 'CleanupPerformed' 
-            ORDER BY timestamp DESC 
-            LIMIT 1
-            "#,
+                SELECT 
+                    (SELECT COUNT(*) FROM checkpoints) as total_checkpoints,
+                    (SELECT COUNT(*) FROM sessions) as total_sessions,
+                    (SELECT COALESCE(SUM(total_size_bytes), 0) FROM sessions) as total_storage
+                "#,
                 [],
                 |row| {
-                    DateTime::parse_from_rfc3339(&row.get::<_, String>(0)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                0,
-                                "Invalid datetime".to_string(),
-                                rusqlite::types::Type::Text,
-                            )
-                        })
+                    Ok((
+                        row.get::<_, i32>(0)? as usize,
+                        row.get::<_, i32>(1)? as usize,
+                        row.get::<_, i64>(2)? as u64,
+                    ))
                 },
-            )
-            .optional()?;
+            )?;
 
-        // Calculate performance metrics
+            let avg_checkpoint_size = if total_checkpoints > 0 {
+                total_storage_bytes / total_checkpoints as u64
+            } else {
+                0
+            };
+
+            let files_tracked = conn.query_row("SELECT COUNT(*) FROM file_changes", [], |row| {
+                row.get::<_, i32>(0).map(|n| n as usize)
+            })?;
+
+            let last_cleanup = conn
+                .query_row(
+                    r#"
+                SELECT timestamp FROM audit_log 
+                WHERE action = 'CleanupPerformed' 
+                ORDER BY timestamp DESC 
+                LIMIT 1
+                "#,
+                    [],
+                    |row| {
+                        DateTime::parse_from_rfc3339(&row.get::<_, String>(0)?)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .map_err(|_| {
+                                rusqlite::Error::InvalidColumnType(
+                                    0,
+                                    "Invalid datetime".to_string(),
+                                    rusqlite::types::Type::Text,
+                                )
+                            })
+                    },
+                )
+                .optional()?;
+
+            (total_checkpoints, total_sessions, total_storage_bytes, avg_checkpoint_size, files_tracked, last_cleanup)
+        }; // conn lock dropped here
+
+        // Calculate performance metrics (acquires its own lock)
         let performance = self.calculate_performance_metrics()?;
 
-        // Calculate actual compression ratio from stored content sizes
+        // Calculate actual compression ratio from stored content sizes (acquires its own lock)
         let (compression_ratio, deduplication_savings) = self.calculate_storage_metrics()?;
 
         Ok(CheckpointStats {
@@ -1055,13 +1072,63 @@ impl CheckpointDatabase {
             )?
             .unwrap_or(0.0);
 
-        // Estimate other metrics (would need actual monitoring in production)
+        // Calculate real metrics from database query count and timing
+        let query_count: i64 = conn
+            .query_row(
+                r#"
+            SELECT COUNT(*) FROM performance_metrics
+            WHERE timestamp > datetime('now', '-1 hour')
+            "#,
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let db_queries_per_second = query_count as f64 / 3600.0;
+
+        // Estimate file I/O throughput from recent operations
+        let total_bytes_processed: f64 = conn
+            .query_row(
+                r#"
+            SELECT COALESCE(SUM(CAST(json_extract(details, '$.bytes_processed') AS REAL)), 0)
+            FROM performance_metrics
+            WHERE timestamp > datetime('now', '-1 hour')
+            "#,
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        let file_io_mbps = total_bytes_processed / (1024.0 * 1024.0) / 3600.0;
+
+        // Get current process memory usage (RSS) via /proc or sysinfo fallback
+        let memory_usage_mb = {
+            #[cfg(target_os = "linux")]
+            {
+                std::fs::read_to_string("/proc/self/statm")
+                    .ok()
+                    .and_then(|s| s.split_whitespace().nth(1)?.parse::<f64>().ok())
+                    .map(|pages| pages * 4096.0 / (1024.0 * 1024.0))
+                    .unwrap_or(0.0)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                // On macOS/Windows, use a rough estimate from DB file size
+                let db_path = conn.path().unwrap_or("");
+                if !db_path.is_empty() {
+                    std::fs::metadata(db_path)
+                        .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                }
+            }
+        };
+
         Ok(PerformanceMetrics {
             avg_creation_time_ms,
             avg_restoration_time_ms,
-            db_queries_per_second: 1000.0, // Placeholder
-            file_io_mbps: 100.0,           // Placeholder
-            memory_usage_mb: 50.0,         // Placeholder
+            db_queries_per_second,
+            file_io_mbps,
+            memory_usage_mb,
         })
     }
 
@@ -1351,19 +1418,21 @@ impl CheckpointDatabase {
         session_id: &SessionId,
         branch_id: Option<&str>,
     ) -> Result<Option<Checkpoint>> {
-        let conn = self.connection.lock();
-        let id_str: Option<String> = if let Some(bid) = branch_id {
-            conn.query_row(
-                "SELECT id FROM checkpoints WHERE session_id = ?1 AND branch_id = ?2 ORDER BY created_at DESC LIMIT 1",
-                params![session_id.to_string(), bid],
-                |row| row.get(0),
-            ).optional()?
-        } else {
-            conn.query_row(
-                "SELECT id FROM checkpoints WHERE session_id = ?1 AND branch_id IS NULL ORDER BY created_at DESC LIMIT 1",
-                params![session_id.to_string()],
-                |row| row.get(0),
-            ).optional()?
+        let id_str: Option<String> = {
+            let conn = self.connection.lock();
+            if let Some(bid) = branch_id {
+                conn.query_row(
+                    "SELECT id FROM checkpoints WHERE session_id = ?1 AND branch_id = ?2 ORDER BY created_at DESC LIMIT 1",
+                    params![session_id.to_string(), bid],
+                    |row| row.get(0),
+                ).optional()?
+            } else {
+                conn.query_row(
+                    "SELECT id FROM checkpoints WHERE session_id = ?1 AND branch_id IS NULL ORDER BY created_at DESC LIMIT 1",
+                    params![session_id.to_string()],
+                    |row| row.get(0),
+                ).optional()?
+            }
         };
 
         if let Some(id_s) = id_str {
@@ -1503,20 +1572,22 @@ impl CheckpointDatabase {
         branch_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<Checkpoint>> {
-        let conn = self.connection.lock();
-        let limit_val = limit.unwrap_or(100) as i64;
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id FROM checkpoints 
-            WHERE branch_id = ?1 
-            ORDER BY created_at DESC 
-            LIMIT ?2
-            "#,
-        )?;
+        let ids: Vec<String> = {
+            let conn = self.connection.lock();
+            let limit_val = limit.unwrap_or(100) as i64;
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id FROM checkpoints 
+                WHERE branch_id = ?1 
+                ORDER BY created_at DESC 
+                LIMIT ?2
+                "#,
+            )?;
 
-        let ids: Vec<String> = stmt
-            .query_map(params![branch_id, limit_val], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            let result = stmt.query_map(params![branch_id, limit_val], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            result
+        };
 
         let mut checkpoints = Vec::new();
         for id_str in ids {

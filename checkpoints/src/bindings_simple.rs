@@ -280,66 +280,82 @@ pub fn restore_checkpoint(mut cx: FunctionContext) -> JsResult<JsObject> {
     // Parse restore options
     let mut restore_options = RestoreOptions::default();
 
+    // Helper: safely extract an optional boolean property
+    macro_rules! get_opt_bool {
+        ($obj:expr, $cx:expr, $key:expr) => {{
+            let val = $obj.get::<JsValue, _, _>($cx, $key)?;
+            val.downcast::<JsBoolean, _>($cx).ok().map(|b| b.value($cx))
+        }};
+    }
+
     // Parse createBackup
-    if let Ok(create_backup) = options_obj.get::<JsBoolean, _, _>(&mut cx, "createBackup") {
-        restore_options.create_backup = create_backup.value(&mut cx);
+    if let Some(v) = get_opt_bool!(options_obj, &mut cx, "createBackup") {
+        restore_options.create_backup = v;
     }
 
     // Parse restorePermissions
-    if let Ok(restore_permissions) =
-        options_obj.get::<JsBoolean, _, _>(&mut cx, "restorePermissions")
-    {
-        restore_options.restore_permissions = restore_permissions.value(&mut cx);
+    if let Some(v) = get_opt_bool!(options_obj, &mut cx, "restorePermissions") {
+        restore_options.restore_permissions = v;
     }
 
     // Parse restoreTimestamps
-    if let Ok(restore_timestamps) = options_obj.get::<JsBoolean, _, _>(&mut cx, "restoreTimestamps")
-    {
-        restore_options.restore_timestamps = restore_timestamps.value(&mut cx);
+    if let Some(v) = get_opt_bool!(options_obj, &mut cx, "restoreTimestamps") {
+        restore_options.restore_timestamps = v;
     }
 
     // Parse validateChecksums
-    if let Ok(validate_checksums) = options_obj.get::<JsBoolean, _, _>(&mut cx, "validateChecksums")
-    {
-        restore_options.validate_checksums = validate_checksums.value(&mut cx);
+    if let Some(v) = get_opt_bool!(options_obj, &mut cx, "validateChecksums") {
+        restore_options.validate_checksums = v;
+    }
+
+    // Parse dryRun
+    if let Some(v) = get_opt_bool!(options_obj, &mut cx, "dryRun") {
+        restore_options.dry_run = v;
     }
 
     // Parse conflictResolution
-    if let Ok(conflict_resolution) =
-        options_obj.get::<JsString, _, _>(&mut cx, "conflictResolution")
     {
-        let resolution_str = conflict_resolution.value(&mut cx);
-        restore_options.conflict_resolution = match resolution_str.as_str() {
-            "skip" => ConflictResolution::Skip,
-            "overwrite" => ConflictResolution::Overwrite,
-            "backup" => ConflictResolution::Backup,
-            "prompt" => ConflictResolution::Prompt,
-            _ => ConflictResolution::Overwrite, // Default
-        };
+        let val = options_obj.get::<JsValue, _, _>(&mut cx, "conflictResolution")?;
+        if let Ok(conflict_resolution) = val.downcast::<JsString, _>(&mut cx) {
+            let resolution_str = conflict_resolution.value(&mut cx);
+            restore_options.conflict_resolution = match resolution_str.as_str() {
+                "skip" => ConflictResolution::Skip,
+                "overwrite" => ConflictResolution::Overwrite,
+                "backup" => ConflictResolution::Backup,
+                "prompt" => ConflictResolution::Prompt,
+                _ => ConflictResolution::Overwrite, // Default
+            };
+        }
     }
 
     // Parse includeFiles
-    if let Ok(include_files) = options_obj.get::<JsArray, _, _>(&mut cx, "includeFiles") {
-        let length = include_files.len(&mut cx);
-        let mut files = Vec::new();
-        for i in 0..length {
-            if let Ok(file) = include_files.get::<JsString, _, _>(&mut cx, i) {
-                files.push(PathBuf::from(file.value(&mut cx)));
+    {
+        let val = options_obj.get::<JsValue, _, _>(&mut cx, "includeFiles")?;
+        if let Ok(include_files) = val.downcast::<JsArray, _>(&mut cx) {
+            let length = include_files.len(&mut cx);
+            let mut files = Vec::new();
+            for i in 0..length {
+                if let Ok(file) = include_files.get::<JsString, _, _>(&mut cx, i) {
+                    files.push(PathBuf::from(file.value(&mut cx)));
+                }
             }
+            restore_options.include_files = files;
         }
-        restore_options.include_files = files;
     }
 
     // Parse excludeFiles
-    if let Ok(exclude_files) = options_obj.get::<JsArray, _, _>(&mut cx, "excludeFiles") {
-        let length = exclude_files.len(&mut cx);
-        let mut files = Vec::new();
-        for i in 0..length {
-            if let Ok(file) = exclude_files.get::<JsString, _, _>(&mut cx, i) {
-                files.push(PathBuf::from(file.value(&mut cx)));
+    {
+        let val = options_obj.get::<JsValue, _, _>(&mut cx, "excludeFiles")?;
+        if let Ok(exclude_files) = val.downcast::<JsArray, _>(&mut cx) {
+            let length = exclude_files.len(&mut cx);
+            let mut files = Vec::new();
+            for i in 0..length {
+                if let Ok(file) = exclude_files.get::<JsString, _, _>(&mut cx, i) {
+                    files.push(PathBuf::from(file.value(&mut cx)));
+                }
             }
+            restore_options.exclude_files = files;
         }
-        restore_options.exclude_files = files;
     }
 
     // Create manager and perform restoration
@@ -523,6 +539,19 @@ pub fn get_checkpoint_stats(mut cx: FunctionContext) -> JsResult<JsObject> {
     }
 }
 
+/// Run storage garbage collection to remove orphaned content blobs
+pub fn run_storage_gc(mut cx: FunctionContext) -> JsResult<JsNumber> {
+    let manager = match create_manager() {
+        Ok(m) => m,
+        Err(e) => return cx.throw_error(e),
+    };
+
+    match manager.run_storage_gc() {
+        Ok(freed_bytes) => Ok(cx.number(freed_bytes as f64)),
+        Err(e) => cx.throw_error(format!("Failed to run storage GC: {}", e)),
+    }
+}
+
 /// Analyze codebase semantics for a set of file changes
 ///
 /// Arguments:
@@ -543,18 +572,23 @@ pub fn analyze_semantics(mut cx: FunctionContext) -> JsResult<JsObject> {
     let mut file_changes = Vec::new();
     for i in 0..len {
         let item = files_array.get::<JsObject, _, _>(&mut cx, i)?;
-        let path_str = item
-            .get::<JsString, _, _>(&mut cx, "path")
+        let path_val = item.get::<JsValue, _, _>(&mut cx, "path")?;
+        let path_str = path_val
+            .downcast::<JsString, _>(&mut cx)
+            .ok()
             .map(|v| v.value(&mut cx))
             .unwrap_or_default();
-        let content = item
-            .get::<JsString, _, _>(&mut cx, "content")
+        let content_val = item.get::<JsValue, _, _>(&mut cx, "content")?;
+        let content = content_val
+            .downcast::<JsString, _>(&mut cx)
             .ok()
             .map(|v| v.value(&mut cx));
-        let change_type_str = item
-            .get::<JsString, _, _>(&mut cx, "changeType")
+        let ct_val = item.get::<JsValue, _, _>(&mut cx, "changeType")?;
+        let change_type_str = ct_val
+            .downcast::<JsString, _>(&mut cx)
+            .ok()
             .map(|v| v.value(&mut cx))
-            .unwrap_or_else(|_| "modified".to_string());
+            .unwrap_or_else(|| "modified".to_string());
 
         let change_type = match change_type_str.as_str() {
             "created" => ChangeType::Created,
@@ -1399,18 +1433,24 @@ pub fn record_restoration_event(mut cx: FunctionContext) -> JsResult<JsBoolean> 
         .get::<JsNumber, _, _>(&mut cx, "filesFailed")?
         .value(&mut cx) as u64;
 
-    let timestamp = if let Ok(ts) = event_obj.get::<JsString, _, _>(&mut cx, "timestamp") {
-        chrono::DateTime::parse_from_rfc3339(&ts.value(&mut cx))
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now())
-    } else {
-        chrono::Utc::now()
+    let timestamp = {
+        let val = event_obj.get::<JsValue, _, _>(&mut cx, "timestamp")?;
+        if let Ok(ts) = val.downcast::<JsString, _>(&mut cx) {
+            chrono::DateTime::parse_from_rfc3339(&ts.value(&mut cx))
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now())
+        } else {
+            chrono::Utc::now()
+        }
     };
 
-    let error = if let Ok(value) = event_obj.get::<JsString, _, _>(&mut cx, "error") {
-        Some(value.value(&mut cx))
-    } else {
-        None
+    let error = {
+        let val = event_obj.get::<JsValue, _, _>(&mut cx, "error")?;
+        if let Ok(s) = val.downcast::<JsString, _>(&mut cx) {
+            Some(s.value(&mut cx))
+        } else {
+            None
+        }
     };
 
     let manager = match create_manager() {
@@ -1459,19 +1499,22 @@ pub fn record_ai_session_metrics(mut cx: FunctionContext) -> JsResult<JsBoolean>
         }
     };
 
-    let ended_at = if let Ok(value) = metrics_obj.get::<JsString, _, _>(&mut cx, "endedAt") {
-        let ended_at_raw = value.value(&mut cx);
-        Some(match chrono::DateTime::parse_from_rfc3339(&ended_at_raw) {
-            Ok(parsed) => parsed.with_timezone(&chrono::Utc),
-            Err(error) => {
-                return cx.throw_error(format!(
-                    "Invalid endedAt timestamp for AI session metrics: {}",
-                    error
-                ))
-            }
-        })
-    } else {
-        None
+    let ended_at = {
+        let val = metrics_obj.get::<JsValue, _, _>(&mut cx, "endedAt")?;
+        if let Ok(value) = val.downcast::<JsString, _>(&mut cx) {
+            let ended_at_raw = value.value(&mut cx);
+            Some(match chrono::DateTime::parse_from_rfc3339(&ended_at_raw) {
+                Ok(parsed) => parsed.with_timezone(&chrono::Utc),
+                Err(error) => {
+                    return cx.throw_error(format!(
+                        "Invalid endedAt timestamp for AI session metrics: {}",
+                        error
+                    ))
+                }
+            })
+        } else {
+            None
+        }
     };
 
     let files_changed = metrics_obj
@@ -1514,4 +1557,326 @@ pub fn record_ai_session_metrics(mut cx: FunctionContext) -> JsResult<JsBoolean>
         Ok(_) => Ok(cx.boolean(true)),
         Err(e) => cx.throw_error(format!("Failed to record AI session metrics: {}", e)),
     }
+}
+
+// ========================================
+// Phase 2.6: Semantic Analysis NAPI Bindings
+// ========================================
+
+/// Analyze the semantic diff between two sets of file changes.
+///
+/// Arguments:
+///   0: JsArray of { path: string, content: string, changeType: string }
+///
+/// Returns a JsObject with intent analysis, code relationships, and architectural impact.
+pub fn analyze_checkpoint_diff(mut cx: FunctionContext) -> JsResult<JsObject> {
+    use crate::semantic::analyzer::SemanticAnalyzer;
+
+    let files_array = cx.argument::<JsArray>(0)?;
+    let file_changes = parse_file_changes_array(&mut cx, &files_array)?;
+
+    let analyzer = match SemanticAnalyzer::new() {
+        Ok(a) => a,
+        Err(e) => return cx.throw_error(format!("Failed to create analyzer: {}", e)),
+    };
+
+    let context = match analyzer.analyze_codebase(&file_changes) {
+        Ok(ctx) => ctx,
+        Err(e) => return cx.throw_error(format!("Analyze failed: {}", e)),
+    };
+
+    let result = cx.empty_object();
+
+    // Intent analysis
+    if let Ok(intent) = analyzer.analyze_intent(&file_changes, &context) {
+        let intent_obj = cx.empty_object();
+        let change_intent = cx.string(format!("{:?}", intent.change_intent));
+        intent_obj.set(&mut cx, "changeIntent", change_intent)?;
+
+        let features = JsArray::new(&mut cx, intent.affected_features.len());
+        for (i, feat) in intent.affected_features.iter().enumerate() {
+            let s = cx.string(feat);
+            features.set(&mut cx, i as u32, s)?;
+        }
+        intent_obj.set(&mut cx, "affectedFeatures", features)?;
+
+        let confidence = cx.number(intent.confidence);
+        intent_obj.set(&mut cx, "confidence", confidence)?;
+
+        if let Some(ref refactoring) = intent.refactoring_type {
+            let rt = cx.string(format!("{:?}", refactoring));
+            intent_obj.set(&mut cx, "refactoringType", rt)?;
+        }
+
+        result.set(&mut cx, "intent", intent_obj)?;
+    }
+
+    // Code relationships
+    if let Ok(rels) = analyzer.build_code_relationships(&file_changes, &context) {
+        let rels_obj = cx.empty_object();
+
+        let direct = JsArray::new(&mut cx, rels.direct_dependencies.len());
+        for (i, dep) in rels.direct_dependencies.iter().enumerate() {
+            let s = cx.string(dep);
+            direct.set(&mut cx, i as u32, s)?;
+        }
+        rels_obj.set(&mut cx, "directDependencies", direct)?;
+
+        let transitive = JsArray::new(&mut cx, rels.transitive_dependencies.len());
+        for (i, dep) in rels.transitive_dependencies.iter().enumerate() {
+            let s = cx.string(dep);
+            transitive.set(&mut cx, i as u32, s)?;
+        }
+        rels_obj.set(&mut cx, "transitiveDependencies", transitive)?;
+
+        let dependents = JsArray::new(&mut cx, rels.dependents.len());
+        for (i, dep) in rels.dependents.iter().enumerate() {
+            let s = cx.string(dep);
+            dependents.set(&mut cx, i as u32, s)?;
+        }
+        rels_obj.set(&mut cx, "dependents", dependents)?;
+
+        result.set(&mut cx, "relationships", rels_obj)?;
+    }
+
+    // Architectural impact
+    if let Ok(impact) = analyzer.analyze_architectural_impact(&file_changes, &context) {
+        let impact_obj = cx.empty_object();
+        let sig = cx.string(format!("{:?}", impact.significance));
+        impact_obj.set(&mut cx, "significance", sig)?;
+
+        let layers = JsArray::new(&mut cx, impact.layers_affected.len());
+        for (i, layer) in impact.layers_affected.iter().enumerate() {
+            let s = cx.string(format!("{:?}", layer));
+            layers.set(&mut cx, i as u32, s)?;
+        }
+        impact_obj.set(&mut cx, "layersAffected", layers)?;
+
+        result.set(&mut cx, "architecturalImpact", impact_obj)?;
+    }
+
+    Ok(result)
+}
+
+/// Get a symbol map for a given file content.
+///
+/// Arguments:
+///   0: JsString — file path (used for language detection)
+///   1: JsString — file content
+///
+/// Returns a JsObject with extracted symbols (functions, classes, interfaces, types).
+pub fn get_symbol_map(mut cx: FunctionContext) -> JsResult<JsObject> {
+    use crate::semantic::analyzer::SemanticAnalyzer;
+
+    let file_path = cx.argument::<JsString>(0)?.value(&mut cx);
+    let file_content = cx.argument::<JsString>(1)?.value(&mut cx);
+
+    let analyzer = match SemanticAnalyzer::new() {
+        Ok(a) => a,
+        Err(e) => return cx.throw_error(format!("Failed to create analyzer: {}", e)),
+    };
+
+    let file_changes = vec![FileChange {
+        path: PathBuf::from(&file_path),
+        change_type: ChangeType::Modified,
+        original_content: None,
+        new_content: Some(file_content),
+        size_bytes: 0,
+        content_hash: String::new(),
+        permissions: None,
+        modified_at: chrono::Utc::now(),
+        encoding: crate::types::FileEncoding::Utf8,
+        compressed: false,
+    }];
+
+    let context = match analyzer.analyze_codebase(&file_changes) {
+        Ok(ctx) => ctx,
+        Err(e) => return cx.throw_error(format!("Analyze failed: {}", e)),
+    };
+
+    let result = cx.empty_object();
+
+    // Functions
+    let func_arr = JsArray::new(&mut cx, context.functions.len());
+    for (i, (name, _)) in context.functions.iter().enumerate() {
+        let s = cx.string(name);
+        func_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "functions", func_arr)?;
+
+    // Classes
+    let class_arr = JsArray::new(&mut cx, context.classes.len());
+    for (i, (name, _)) in context.classes.iter().enumerate() {
+        let s = cx.string(name);
+        class_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "classes", class_arr)?;
+
+    // Interfaces
+    let iface_arr = JsArray::new(&mut cx, context.interfaces.len());
+    for (i, (name, _)) in context.interfaces.iter().enumerate() {
+        let s = cx.string(name);
+        iface_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "interfaces", iface_arr)?;
+
+    // Types
+    let type_arr = JsArray::new(&mut cx, context.types.len());
+    for (i, (name, _)) in context.types.iter().enumerate() {
+        let s = cx.string(name);
+        type_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "types", type_arr)?;
+
+    // Imports
+    let imports_arr = JsArray::new(&mut cx, context.imports.len());
+    for (i, imp) in context.imports.iter().enumerate() {
+        let s = cx.string(&imp.module);
+        imports_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "imports", imports_arr)?;
+
+    // Exports
+    let export_names: Vec<String> = context
+        .exports
+        .iter()
+        .flat_map(|exp| {
+            if exp.exported_items.is_empty() {
+                exp.alias.clone().into_iter().collect::<Vec<String>>()
+            } else {
+                exp.exported_items.clone()
+            }
+        })
+        .collect();
+    let exports_arr = JsArray::new(&mut cx, export_names.len());
+    for (i, name) in export_names.iter().enumerate() {
+        let s = cx.string(name);
+        exports_arr.set(&mut cx, i as u32, s)?;
+    }
+    result.set(&mut cx, "exports", exports_arr)?;
+
+    Ok(result)
+}
+
+/// Get a dependency graph for a set of files.
+///
+/// Arguments:
+///   0: JsArray of { path: string, content: string, changeType: string }
+///
+/// Returns a JsObject with nodes, edges, and cycles.
+pub fn get_dependency_graph(mut cx: FunctionContext) -> JsResult<JsObject> {
+    use crate::semantic::analyzer::SemanticAnalyzer;
+    use crate::semantic::RelationshipMapper;
+
+    let files_array = cx.argument::<JsArray>(0)?;
+    let file_changes = parse_file_changes_array(&mut cx, &files_array)?;
+
+    let analyzer = match SemanticAnalyzer::new() {
+        Ok(a) => a,
+        Err(e) => return cx.throw_error(format!("Failed to create analyzer: {}", e)),
+    };
+
+    let context = match analyzer.analyze_codebase(&file_changes) {
+        Ok(ctx) => ctx,
+        Err(e) => return cx.throw_error(format!("Analyze failed: {}", e)),
+    };
+
+    let mapper = RelationshipMapper::new();
+    let graph = match mapper.build_dependency_graph(&file_changes, &context) {
+        Ok(g) => g,
+        Err(e) => return cx.throw_error(format!("Graph build failed: {}", e)),
+    };
+
+    let result = cx.empty_object();
+
+    // Nodes
+    let nodes_arr = JsArray::new(&mut cx, graph.nodes.len());
+    for (i, node) in graph.nodes.iter().enumerate() {
+        let node_obj = cx.empty_object();
+        let id = cx.string(&node.id);
+        node_obj.set(&mut cx, "id", id)?;
+        let node_type = cx.string(format!("{:?}", node.node_type));
+        node_obj.set(&mut cx, "type", node_type)?;
+        nodes_arr.set(&mut cx, i as u32, node_obj)?;
+    }
+    result.set(&mut cx, "nodes", nodes_arr)?;
+
+    // Edges
+    let edges_arr = JsArray::new(&mut cx, graph.edges.len());
+    for (i, edge) in graph.edges.iter().enumerate() {
+        let edge_obj = cx.empty_object();
+        let from = cx.string(&edge.from);
+        edge_obj.set(&mut cx, "from", from)?;
+        let to = cx.string(&edge.to);
+        edge_obj.set(&mut cx, "to", to)?;
+        let edge_type = cx.string(format!("{:?}", edge.edge_type));
+        edge_obj.set(&mut cx, "type", edge_type)?;
+        let strength = cx.number(edge.strength);
+        edge_obj.set(&mut cx, "strength", strength)?;
+        edges_arr.set(&mut cx, i as u32, edge_obj)?;
+    }
+    result.set(&mut cx, "edges", edges_arr)?;
+
+    // Cycles
+    let cycles_arr = JsArray::new(&mut cx, graph.cycles.len());
+    for (i, cycle) in graph.cycles.iter().enumerate() {
+        let cycle_arr = JsArray::new(&mut cx, cycle.len());
+        for (j, node_id) in cycle.iter().enumerate() {
+            let s = cx.string(node_id);
+            cycle_arr.set(&mut cx, j as u32, s)?;
+        }
+        cycles_arr.set(&mut cx, i as u32, cycle_arr)?;
+    }
+    result.set(&mut cx, "cycles", cycles_arr)?;
+
+    Ok(result)
+}
+
+/// Helper: parse a JsArray of file change objects into Vec<FileChange>
+fn parse_file_changes_array(cx: &mut FunctionContext, arr: &JsArray) -> NeonResult<Vec<FileChange>> {
+
+    let len = arr.len(cx);
+    let mut file_changes = Vec::with_capacity(len as usize);
+
+    for i in 0..len {
+        let item = arr.get::<JsObject, _, _>(cx, i)?;
+        let path_str = item
+            .get::<JsValue, _, _>(cx, "path")?
+            .downcast::<JsString, _>(cx)
+            .ok()
+            .map(|v| v.value(cx))
+            .unwrap_or_default();
+        let content = item
+            .get::<JsValue, _, _>(cx, "content")?
+            .downcast::<JsString, _>(cx)
+            .ok()
+            .map(|v| v.value(cx));
+        let change_type_str = item
+            .get::<JsValue, _, _>(cx, "changeType")?
+            .downcast::<JsString, _>(cx)
+            .ok()
+            .map(|v| v.value(cx))
+            .unwrap_or_else(|| "modified".to_string());
+
+        let change_type = match change_type_str.as_str() {
+            "created" => ChangeType::Created,
+            "deleted" => ChangeType::Deleted,
+            _ => ChangeType::Modified,
+        };
+
+        file_changes.push(FileChange {
+            path: PathBuf::from(&path_str),
+            change_type,
+            original_content: None,
+            new_content: content,
+            size_bytes: 0,
+            content_hash: String::new(),
+            permissions: None,
+            modified_at: chrono::Utc::now(),
+            encoding: crate::types::FileEncoding::Utf8,
+            compressed: false,
+        });
+    }
+
+    Ok(file_changes)
 }

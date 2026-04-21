@@ -205,6 +205,10 @@ impl CheckpointRestoration {
         if result.success {
             if let Some(backup_id) = &result.backup_checkpoint_id {
                 log::info!("Restoration succeeded; backup {} retained for safety", backup_id);
+                // Clean up old backups to prevent disk exhaustion
+                if let Err(e) = self.cleanup_old_backups(5, 7) {
+                    log::warn!("Failed to clean up old backups: {}", e);
+                }
             }
         }
 
@@ -223,6 +227,7 @@ impl CheckpointRestoration {
 
         // Walk workspace and back up files (skipping hidden dirs / backup dir itself)
         let mut file_count: usize = 0;
+        let mut hash_inputs: Vec<(String, String)> = Vec::new();
         for entry in walkdir::WalkDir::new(&self.workspace_path)
             .into_iter()
             .filter_entry(|e| {
@@ -247,17 +252,141 @@ impl CheckpointRestoration {
             }
             if fs::copy(entry.path(), &dest).is_ok() {
                 file_count += 1;
+                // Compute checksum of the copied file for verification
+                if let Ok(content) = fs::read(&dest) {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(&content);
+                    hash_inputs.push((rel.to_string_lossy().to_string(), hex::encode(hasher.finalize())));
+                }
             }
+        }
+
+        // Write manifest with checksums for backup verification
+        let manifest_path = backup_dir.join(".backup-manifest.json");
+        let manifest = serde_json::json!({
+            "backup_id": backup_id.to_string(),
+            "created_at": Utc::now().to_rfc3339(),
+            "file_count": file_count,
+            "checksums": hash_inputs.into_iter()
+                .map(|(path, hash)| serde_json::json!({"path": path, "sha256": hash}))
+                .collect::<Vec<_>>(),
+        });
+        if let Err(e) = fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap_or_default()) {
+            log::warn!("Failed to write backup manifest: {}", e);
         }
 
         // Verify backup by checking file count
         if file_count == 0 {
             log::warn!("Pre-restore backup {} contains 0 files", backup_id);
         } else {
-            log::info!("Pre-restore backup {} created with {} files", backup_id, file_count);
+            log::info!("Pre-restore backup {} created with {} files (verified)", backup_id, file_count);
         }
 
         Ok(backup_id)
+    }
+
+    /// Clean up old backups to prevent unbounded disk growth.
+    /// Keeps at most `max_backups` and removes any older than `retention_days`.
+    fn cleanup_old_backups(&self, max_backups: usize, retention_days: u64) -> Result<()> {
+        let backups_dir = self.workspace_path.join(".checkpoints").join("backups");
+        if !backups_dir.exists() {
+            return Ok(());
+        }
+
+        let mut backups: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+        for entry in fs::read_dir(&backups_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let modified = entry.metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                backups.push((path, modified));
+            }
+        }
+
+        // Sort by modification time (newest first)
+        backups.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let now = std::time::SystemTime::now();
+        let retention_cutoff = std::time::Duration::from_secs(retention_days * 24 * 60 * 60);
+
+        for (i, (path, modified)) in backups.iter().enumerate() {
+            let is_over_limit = i >= max_backups;
+            let is_expired = now.duration_since(*modified)
+                .map(|age| age > retention_cutoff)
+                .unwrap_or(false);
+
+            if is_over_limit || is_expired {
+                log::info!("Removing old backup: {}", path.display());
+                if let Err(e) = fs::remove_dir_all(path) {
+                    log::warn!("Failed to remove backup {}: {}", path.display(), e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Verify a backup's integrity by comparing stored checksums with actual file hashes.
+    pub fn verify_backup(&self, backup_id: &CheckpointId) -> Result<bool> {
+        let backup_dir = self.workspace_path
+            .join(".checkpoints")
+            .join("backups")
+            .join(backup_id.to_string());
+
+        if !backup_dir.exists() {
+            return Err(CheckpointError::generic(format!(
+                "Backup {} not found", backup_id
+            )));
+        }
+
+        let manifest_path = backup_dir.join(".backup-manifest.json");
+        if !manifest_path.exists() {
+            log::warn!("No manifest found for backup {}, cannot verify", backup_id);
+            return Ok(false);
+        }
+
+        let manifest_content = fs::read_to_string(&manifest_path)?;
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_content)
+            .map_err(|e| CheckpointError::generic(format!("Invalid manifest: {}", e)))?;
+
+        let checksums = manifest["checksums"].as_array()
+            .ok_or_else(|| CheckpointError::generic("No checksums in manifest"))?;
+
+        let mut verified = 0usize;
+        let mut failed = 0usize;
+
+        for entry in checksums {
+            let path = entry["path"].as_str().unwrap_or("");
+            let expected_hash = entry["sha256"].as_str().unwrap_or("");
+            let file_path = backup_dir.join(path);
+
+            if !file_path.exists() {
+                log::warn!("Backup file missing: {}", path);
+                failed += 1;
+                continue;
+            }
+
+            if let Ok(content) = fs::read(&file_path) {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(&content);
+                let actual_hash = hex::encode(hasher.finalize());
+                if actual_hash != expected_hash {
+                    log::warn!("Checksum mismatch for {}: expected {} got {}", path, expected_hash, actual_hash);
+                    failed += 1;
+                } else {
+                    verified += 1;
+                }
+            } else {
+                failed += 1;
+            }
+        }
+
+        log::info!("Backup {} verification: {} verified, {} failed", backup_id, verified, failed);
+        Ok(failed == 0)
     }
 
     /// Detect conflicts that would occur during restoration

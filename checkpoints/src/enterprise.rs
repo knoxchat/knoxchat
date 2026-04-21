@@ -617,47 +617,145 @@ pub struct ComplianceStatus {
 /// System monitoring component
 pub struct SystemMonitor {
     _config: MonitoringConfig,
+    /// Optional storage reference for real metrics
+    storage: Option<Arc<crate::storage::CheckpointStorage>>,
+    /// Optional database reference for real metrics
+    db: Option<Arc<crate::db::CheckpointDatabase>>,
 }
 
 impl SystemMonitor {
     pub fn new(config: &MonitoringConfig) -> Result<Self> {
         Ok(Self {
             _config: config.clone(),
+            storage: None,
+            db: None,
+        })
+    }
+
+    /// Create a monitor with storage and database references for real metrics
+    pub fn with_backends(
+        config: &MonitoringConfig,
+        storage: Arc<crate::storage::CheckpointStorage>,
+        db: Arc<crate::db::CheckpointDatabase>,
+    ) -> Result<Self> {
+        Ok(Self {
+            _config: config.clone(),
+            storage: Some(storage),
+            db: Some(db),
         })
     }
 
     pub async fn get_health_status(&self) -> Result<HealthStatus> {
-        // Placeholder implementation
+        let mut components = HashMap::new();
+
+        // Check storage health if available
+        if let Some(ref storage) = self.storage {
+            let status = match storage.get_storage_stats() {
+                Ok(_) => HealthLevel::Healthy,
+                Err(_) => HealthLevel::Warning,
+            };
+            components.insert("storage".to_string(), ComponentHealth {
+                status,
+                message: format!("{:?}", status),
+                metrics: HashMap::new(),
+            });
+        }
+
+        // Check database health if available
+        if let Some(ref db) = self.db {
+            let status = match db.get_stats() {
+                Ok(_) => HealthLevel::Healthy,
+                Err(_) => HealthLevel::Warning,
+            };
+            components.insert("database".to_string(), ComponentHealth {
+                status,
+                message: format!("{:?}", status),
+                metrics: HashMap::new(),
+            });
+        }
+
+        let overall_status = if components.values().any(|c| c.status == HealthLevel::Critical) {
+            HealthLevel::Critical
+        } else if components.values().any(|c| c.status == HealthLevel::Warning) {
+            HealthLevel::Warning
+        } else {
+            HealthLevel::Healthy
+        };
+
         Ok(HealthStatus {
-            overall_status: HealthLevel::Healthy,
-            components: HashMap::new(),
+            overall_status,
+            components,
             last_check: Utc::now(),
         })
     }
 
     pub async fn get_system_metrics(&self) -> Result<SystemMetrics> {
-        // Placeholder implementation
+        // Pull real metrics from storage and database when available
+        let (compression_ratio, deduplication_savings, total_storage) = match self.storage {
+            Some(ref storage) => {
+                let stats = storage.get_storage_stats().unwrap_or_else(|_| crate::storage::StorageStats {
+                    total_size_bytes: 0,
+                    cache_size_bytes: 0,
+                    dedup_entries: 0,
+                    compression_ratio: 1.0,
+                    deduplication_savings_bytes: 0,
+                });
+                (stats.compression_ratio, stats.deduplication_savings_bytes, stats.total_size_bytes)
+            }
+            None => (1.0, 0u64, 0u64),
+        };
+
+        let (total_checkpoints, _total_sessions, avg_size) = match self.db {
+            Some(ref db) => {
+                let stats = db.get_stats().unwrap_or_else(|_| crate::types::CheckpointStats {
+                    total_checkpoints: 0,
+                    total_sessions: 0,
+                    total_storage_bytes: 0,
+                    avg_checkpoint_size: 0,
+                    files_tracked: 0,
+                    compression_ratio: 1.0,
+                    deduplication_savings: 0,
+                    last_cleanup: None,
+                    performance: crate::types::PerformanceMetrics {
+                        avg_creation_time_ms: 0.0,
+                        avg_restoration_time_ms: 0.0,
+                        db_queries_per_second: 0.0,
+                        file_io_mbps: 0.0,
+                        memory_usage_mb: 0.0,
+                    },
+                });
+                (stats.total_checkpoints as u64, stats.total_sessions as u64, stats.avg_checkpoint_size)
+            }
+            None => (0u64, 0u64, 0u64),
+        };
+
+        let deduplication_ratio = if total_storage > 0 {
+            deduplication_savings as f64 / (total_storage + deduplication_savings) as f64
+        } else {
+            0.0
+        };
+
         Ok(SystemMetrics {
             checkpoint_metrics: CheckpointMetrics {
-                total_checkpoints: 0,
+                total_checkpoints,
                 checkpoints_today: 0,
-                average_size_bytes: 0,
+                average_size_bytes: avg_size,
                 success_rate: 100.0,
                 average_creation_time_ms: 0.0,
             },
             storage_metrics: StorageMetrics {
-                total_storage_bytes: 0,
+                total_storage_bytes: total_storage,
                 available_storage_bytes: 0,
                 storage_utilization_percent: 0.0,
-                compression_ratio: 0.7,
-                deduplication_ratio: 0.3,
+                compression_ratio,
+                deduplication_ratio,
             },
             performance_metrics: PerformanceMetrics {
                 avg_creation_time_ms: 0.0,
                 avg_restoration_time_ms: 0.0,
-                db_queries_per_second: 1000.0,
-                file_io_mbps: 100.0,
-                memory_usage_mb: 50.0,
+                db_queries_per_second: 0.0,
+                file_io_mbps: 0.0,
+                memory_usage_mb: 0.0,
             },
             security_metrics: SecurityMetrics {
                 audit_events_today: 0,
