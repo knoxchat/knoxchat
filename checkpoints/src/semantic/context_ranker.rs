@@ -29,7 +29,7 @@ pub struct RankingConfig {
 impl Default for RankingConfig {
     fn default() -> Self {
         Self {
-            max_tokens: 8000,
+            max_tokens: 32000,
             min_confidence_threshold: 0.3,
             diversity_weight: 0.2,
             relevance_weight: 0.4,

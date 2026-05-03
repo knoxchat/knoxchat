@@ -1,0 +1,44 @@
+{
+  "name": "@knox/checkpoints",
+  "version": "1.0.0",
+  "description": "Enterprise-grade checkpoint system for Knox AI coding assistant",
+  "main": "index.node",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "node build.js",
+    "test": "cargo test",
+    "clean": "cargo clean && rm -f index.node",
+    "dev": "cargo build && node build.js",
+    "test:quick": "node -e \"const cp = require('./index.node'); console.log('Config:', cp.getConfig()); console.log('Checkpoint:', cp.createSimpleCheckpoint('Quick test'));\"",
+    "test:interactive": "node test-interactive.js",
+    "test:benchmark": "node benchmark.js",
+    "test:vscode": "node test-vscode-integration.js",
+    "debug": "cargo build && node build.js && npm run test:quick"
+  },
+  "keywords": [
+    "knox",
+    "checkpoint",
+    "restore",
+    "ai",
+    "coding",
+    "assistant",
+    "vscode"
+  ],
+  "files": [
+    "index.node",
+    "index.d.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

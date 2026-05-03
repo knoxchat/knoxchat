@@ -44,19 +44,6 @@ function convertCustomCommand(
   };
 }
 
-function convertMcp(mcp: any): NonNullable<ConfigYaml["mcpServers"]>[number] {
-  const { transport } = mcp;
-  const { command, args, env } = transport;
-
-  return {
-    command,
-    args,
-    env,
-    name: "MCP Server",
-  };
-}
-
-
 export function convertJsonToYamlConfig(configJson: ConfigJson): ConfigYaml {
   // models
   const models = configJson.models.map((m) => convertModel(m, ["chat"]));
@@ -74,12 +61,6 @@ export function convertJsonToYamlConfig(configJson: ConfigJson): ConfigYaml {
   // context
   const context = convertContext(configJson);
 
-  // mcpServers
-  // Types for "experimental" don't exist
-  const mcpServers = (
-    configJson as any
-  ).experimental?.modelContextProtocolServers?.map(convertMcp);
-
   // prompts
   const prompts = configJson.customCommands?.map(convertCustomCommand);
 
@@ -91,7 +72,6 @@ export function convertJsonToYamlConfig(configJson: ConfigJson): ConfigYaml {
     context,
     rules: configJson.systemMessage ? [configJson.systemMessage] : undefined,
     prompts,
-    mcpServers,
   };
 
   return configYaml;

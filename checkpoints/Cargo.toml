@@ -63,6 +63,7 @@ toml.workspace = true
 
 # System utilities
 num_cpus.workspace = true
+lru.workspace = true
 
 # Additional dependencies for production features
 reqwest.workspace = true

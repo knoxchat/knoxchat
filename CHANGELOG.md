@@ -1,3 +1,31 @@
+## V1.2.3
+
+### Features
+
+- Add reasoning/thinking & web search for Anthropic Claude models
+- Add reasoning/thinking for OpenAI models
+
+### Upgrades
+
+- uuid: 14.0.0
+- zod: 4.4.2
+- vite: 8.0.10
+- axios: 1.16.0
+- tailwindcss: 4.2.4
+
+
+## V1.2.2
+
+- Remove MCP
+- Harness relevance improvements
+- Support real-time code generation for all
+- Memory system improvements
+- Optimize DeepSeek V4 Pro & Flash models
+
+## V1.2.1
+
+- Fix Checkpoint Bugs
+
 ## V1.2.0
 
 ### Memory Brain System Upgrades

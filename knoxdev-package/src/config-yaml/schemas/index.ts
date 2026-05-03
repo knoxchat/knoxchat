@@ -7,14 +7,6 @@ export const contextSchema = z.object({
   params: z.any().optional(),
 });
 
-const mcpServerSchema = z.object({
-  name: z.string(),
-  command: z.string(),
-  faviconUrl: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-});
-
 const promptSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -53,7 +45,6 @@ export const configYamlSchema = baseConfigYamlSchema.extend({
     .optional(),
   context: z.array(blockOrSchema(contextSchema)).optional(),
   data: z.array(blockOrSchema(dataSchema)).optional(),
-  mcpServers: z.array(blockOrSchema(mcpServerSchema)).optional(),
   rules: z
     .array(
       z.union([
@@ -74,7 +65,6 @@ export const assistantUnrolledSchema = baseConfigYamlSchema.extend({
   models: z.array(modelSchema).optional(),
   context: z.array(contextSchema).optional(),
   data: z.array(dataSchema).optional(),
-  mcpServers: z.array(mcpServerSchema).optional(),
   rules: z.array(z.string()).optional(),
   prompts: z.array(promptSchema).optional(),
 });
@@ -86,7 +76,6 @@ export const blockSchema = baseConfigYamlSchema.and(
     z.object({ models: z.array(modelSchema).length(1) }),
     z.object({ context: z.array(contextSchema).length(1) }),
     z.object({ data: z.array(dataSchema).length(1) }),
-    z.object({ mcpServers: z.array(mcpServerSchema).length(1) }),
     z.object({ rules: z.array(z.string()).length(1) }),
     z.object({ prompts: z.array(promptSchema).length(1) }),
   ]),
