@@ -152,12 +152,9 @@ impl CheckpointConfig {
 
     /// Get the default storage path based on the getKnoxGlobalPath utility
     pub fn default_storage_path(debug_mode: bool) -> PathBuf {
-        let home = dirs::home_dir().expect("Unable to get home directory");
-        if debug_mode {
-            home.join(".knox-debug").join("checkpoints")
-        } else {
-            home.join(".knox").join("checkpoints")
-        }
+        crate::utils::get_knox_global_path(debug_mode)
+            .expect("Unable to get knox global path")
+            .join("checkpoints")
     }
 
     /// Get the database file path

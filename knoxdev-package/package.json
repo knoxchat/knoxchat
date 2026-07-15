@@ -34,18 +34,18 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "follow-redirects": "^1.16.0",
-    "http-proxy-agent": "^9.0.0",
-    "https-proxy-agent": "^9.0.0",
+    "http-proxy-agent": "^9.1.0",
+    "https-proxy-agent": "^9.1.0",
     "json-schema": "^0.4.0",
     "node-fetch": "^3.3.2",
-    "openai": "^6.35.0",
-    "yaml": "^2.8.4",
-    "zod": "^4.4.2"
+    "openai": "^6.47.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/follow-redirects": "^1.14.4",
     "@types/json-schema": "^7.0.15",
-    "@types/node": "^25.6.0",
-    "typescript": "^6.0.3"
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
   }
 }

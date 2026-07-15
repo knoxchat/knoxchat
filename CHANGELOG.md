@@ -1,3 +1,61 @@
+## V1.3.0
+
+Fast, It's damn fast!
+
+### Upgrades
+
+- TypeScript 7
+- Vite 8.1.4
+- Node 24
+- Esbuild 0.28.1
+- Biome 2.5.4
+
+### Updates & Improvements
+
+- A better tool calling approach
+- Merge all project root .knox into ~/.knox
+
+## Fixes
+
+- git diff HEAD --numstat
+- Merges duplicate diff entries
+- Real-time git state updates via `gitStateChanged` event
+- Repo-relative path matching for accurate +/− stats
+- Merge conflict files included in changed file list
+- Click deleted files to open SCM diff view
+- Smart display paths for duplicate filenames
+- Sort changed files by total line delta
+
+## V1.2.7
+
+- Add git diff status
+- Bugs fix
+
+## V1.2.6
+
+- move project root .knox/task directory to global ~/.knox/task
+- move project root .knox/plans directory to global ~/.knox/plans
+- Optimize the extension with faster initial loading
+- Add todo/task UI
+
+## V1.2.5
+
+- Fix selected model state
+- Fix message displaying state
+- Fix runtime bugs, broken commands
+- Fix match by model ID, not display label substring
+- Added 120-second timeout that rejects with a descriptive error including partial output; clears listeners and data buffer on timeout
+- Enhance font size resize
+- Remove TTS
+
+## V1.2.4
+
+- Fix cross-platform compatible issues
+- Fix checkpoints mass delete issue
+- Improve Settings & Checkpoints Configuration UI/UX
+- Adjust better context length
+- Adjust better max-token management
+
 ## V1.2.3
 
 ### Features

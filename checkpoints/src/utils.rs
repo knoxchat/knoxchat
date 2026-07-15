@@ -4,16 +4,26 @@ use crate::error::{CheckpointError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Get the knox global path, similar to getKnoxGlobalPath utility
+/// Get the knox global path, similar to getKnoxGlobalPath utility.
+/// Respects `KNOX_GLOBAL_DIR` when set (matches the TypeScript paths module).
 pub fn get_knox_global_path(debug_mode: bool) -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("KNOX_GLOBAL_DIR") {
+        let path = PathBuf::from(dir);
+        ensure_dir_exists(&path)?;
+        return Ok(path);
+    }
+
     let home = dirs::home_dir()
         .ok_or_else(|| CheckpointError::file_system("Unable to get home directory"))?;
 
-    if debug_mode {
-        Ok(home.join(".knox-debug"))
+    let knox_path = if debug_mode {
+        home.join(".knox-debug")
     } else {
-        Ok(home.join(".knox"))
-    }
+        home.join(".knox")
+    };
+
+    ensure_dir_exists(&knox_path)?;
+    Ok(knox_path)
 }
 
 /// Format file size in human readable format
