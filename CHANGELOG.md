@@ -1,3 +1,40 @@
+## V1.3.1
+
+- Enhance plan & task manager
+
+### Checkpoints Implementation
+
+- Fix: a new computeCheckpointDiff message
+- Smarter checkpoint creation
+    - Content-hash dedup
+    - Correct created-vs-modified classification
+    - Recognizable auto descriptions
+    - Details consistency: getCheckpointDetails
+- Better compare & list UI
+    - Compare against any checkpoint
+    - Change stats in the list
+- Rewritten Enhanced Diff Viewer
+    - Git-style hunks
+    - Working word-level highlighting
+    - Working navigation
+    - Accurate counts
+    - Copy as real patch
+- Capture coverage — the 1 MB limit and untracked files are fixed
+    - The per-file capture limit is now 5 MB by default and configurable
+    - Text detection is no longer a small hard-coded allowlist
+    - Both file watchers (CheckpointManager and AutoCheckpointSystem) now watch **/* instead of a fixed extension list, with a fast path filter so node_modules, .git, dist, etc. don't cause noise.
+- Binary file support end to end
+    - Images, fonts, PDFs, sqlite files, wasm, audio, etc.
+    - Restore decodes base64 back to bytes, and conflict detection compares binary content correctly.
+
+- New features
+    - Compare against the current workspace: the "Compare against" selector now includes "Current workspace" — it reconstructs the checkpoint's full state and diffs it against what's on disk, effectively a preview of what a restore would change (including files created after the checkpoint).
+    - Selective per-file restore: a new restoreCheckpointFiles message and manager API restores individual files (binary-aware, handles deletions) without touching the rest of the workspace. There's a restore button in the CodeViewer header in the File Snapshots tab.
+    - Copy patch for all files: the enhanced diff viewer gained an "All" copy button that builds one multi-file unified patch across every changed text file.
+    - Runtime config is applied live: saving the settings page immediately updates the manager's size limit, binary toggle, and tracked extensions (also loaded at startup from ~/.knox/checkpoint-config.json plus VS Code settings).
+
+
+
 ## V1.3.0
 
 Fast, It's damn fast!
