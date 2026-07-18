@@ -1,3 +1,37 @@
+## V1.3.2
+
+### Memory Brain — 100% Local
+
+- Remove CloudSync and KnoxMsSync entirely — memory is now fully local with no cloud or Knox-MS sync paths
+- Fix session-scoped episodic search returning zero results (SQL parameter order in fusion FTS)
+- Fix hyphenated queries silently disabling FTS5 (e.g. `build-cache` now quoted as valid FTS5 syntax)
+- Wire the chat model into the Memory Brain on config load so LLM-enhanced extraction and summarization run outside memory-tool calls
+- Close brain sessions when switching chats or starting a new session (topic flush, auto-summarize, working-memory persistence)
+- Auto-consolidation now runs the full sleep cycle every tick and closes sessions idle for 24+ hours
+- Restore working memory when reopening a previously closed session
+
+### Memory Brain — Chat Integration
+
+- Track sessions and record user/assistant turns in the Memory Brain during streaming
+- Inject memory and plan context at the start of each turn; re-inject across tool-call rounds via a context cache so the LLM does not lose memory after the first tool round
+- Auto-store task completions to the brain on stream completion
+- Start auto-consolidation scheduler on Core startup
+
+### Memory Brain — UI & Protocol
+
+- Fix Memory Browser field names and pagination (`importance_score`, `retrieval_count`, `source_session_id`, offset browse)
+- Rewrite Memory Settings to match core config keys; add tiering, features, and import-from-file
+- Fix `brain/searchMemories` to query `brain_semantic` with category filter and offset pagination
+- Extend `brain/import` to accept raw JSON from webviews; `brain/heal` accepts a specific action
+- Remap task-completion auto-store to `summary` category with `task-completion` keyword
+
+### Memory Brain — Hardening
+
+- Unify legacy MemoryManager as a Brain adapter with one-time `memory.sqlite` → `brain.sqlite` migration
+- Fix BrainStore init race with a single in-flight promise; fix `build_context` to skip stale snapshot cache when a query is provided
+- Add Vitest regression suite and GitHub Actions workflow for core memory tests
+- Remove dead code: MemoryProvider, ConventionExtractor, MemoryPanel
+
 ## V1.3.1
 
 - Enhance plan & task manager
