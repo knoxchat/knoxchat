@@ -1,3 +1,33 @@
+## V1.3.3
+
+### Autocomplete — Removed
+
+- Remove tab autocomplete / inline completion entirely (core engine, Rust module, VS Code provider, and native binary)
+- Remove autocomplete model role, settings, commands, and keyboard shortcut (`Cmd/Ctrl + K, Cmd/Ctrl + A`)
+- Remove autocomplete status bar item (the `Knox` checkmark in the status bar) and related battery-pause settings
+- Remove Autocomplete section from Settings and model-role picker in the GUI
+- Drop autocomplete from config schemas, dev-data events, and install/build scripts
+
+### Plan & Task Manager — Lifecycle
+
+- Clear stale plan/task UI before each new user message so completed work does not bleed into the next turn
+- Auto-dismiss completion summary after ~6 seconds; completed todo sessions move to history instead of staying in the active view
+- Full plan/task reset on new chat tab — no stale panels from prior conversations
+- Cancel idle, active, or paused todo sessions when a fresh complex message supersedes them
+- Fix conflicts where a prior completed session kept the plan panel visible on simple follow-up messages
+- `fetchCurrentSession` no longer re-promotes completed sessions to the active UI
+
+### Plan & Task Manager — Panel UX
+
+- Pin expand/collapse on the task status panel — manual toggle sticks for the whole turn (including across tool-call rounds)
+- Stop auto-collapsing or re-expanding the detail panel when streaming state flickers between tool rounds
+- Use `session.isStreaming` as the stable in-progress signal so the panel does not flash into completion mode mid-turn
+
+### Git File Changes Panel
+
+- Pin expand/collapse on the “N files changed” list above the input — periodic git refreshes no longer force it back open
+- Auto-expand only when file changes first appear from an empty state
+
 ## V1.3.2
 
 ### Memory Brain — 100% Local
