@@ -1,4 +1,78 @@
+## V1.3.4
+
+### Agent — Undo, Verification & Apply
+
+- Real file snapshot undo/redo for mutating tools (`knox.undoLastOperation` / `knox.redoLastOperation`); GUI chat and agent share the same Core `tools/call` hooks
+- Optional post-edit verification after edit/create/reapply (`knoxchat.enablePostEditVerification`) with per-file circuit breaker
+- Shadow workspace Accept/Reject preview for Apply (`knoxchat.enableShadowPreview`) — Accept uses the chat apply path; Reject leaves the original untouched
+- Fail-closed tool arg validation against each tool’s JSON Schema (no TODO/untitled placeholders written to disk)
+- Refactoring via VS Code LSP (rename/move) and LLM extract; real `builtin_generate_tests` implementation
+- ToolCallInterceptor quarantined (not on the live path); incomplete args rejected with model-visible errors
+
+### Plan & Task Manager — Truthfulness
+
+- Evidence-gated todo completion — no keyword bulk-skip; stream-end completes only evidenced items
+- Verified shield requires real evidence (`Verified:` / tool-evidence); panel prefers local todos
+- Medium+ complexity plans can require Approve/Reject before execution
+
+### KnoxChat Models & Reasoning
+
+- Persisted warm `/v1/models` cache (disk + localStorage); hydrate before capability lookups so cold start does not hide toggles
+- Reasoning effort from API metadata → sidecar overrides → gateway default; sticky per-model effort in the UI
+- Thinking indicator for any reasoning-capable model; `reasoning_effort` pass-through includes `"none"`
+
+### Web Search
+
+- Retrieval-first web search — never present unlabeled LLM fiction as “search results”
+- Native `web_search` fallback only when the model advertises support (always labeled); otherwise a clear error
+- Web-search toggle and `builtin_search_web` stay mutually exclusive and metadata-driven
+
+### Memory Brain
+
+- Injected memories merge into the leading system message and survive compaction; structured provenance with Pin/Forget in the UI
+- Await session track / working-memory restore on load; post-turn memory write for substantial turns
+- Optional AES-GCM encrypted export/import for local backup (still 100% local — no cloud sync)
+
+### Compaction & Context
+
+- Optional LLM summarization behind `experimental.useLlmSummarization` (timeout/input caps, heuristic fallback)
+- Tool-call pairs kept atomic; memory/plan system blocks preserved
+- CompactionStatusPanel shows when compaction ran (message counts; KnoxChat handles billing)
+- Local context budget uses lightweight char÷4 estimate only — removed tiktoken/worker encoders from the extension
+
+### Tools, Edit & Apply Hardening
+
+- Every tool in the catalog has a `callTool` route; composite tools wired; SmartToolRouter unexported
+- ToolTransaction default file rollback (create → remove; edit → restore prior contents)
+- Lazy-apply handles top/bottom `UNCHANGED` markers; deterministic apply with confidence rejects
+- Repo map signatures from real tree-sitter symbols (mock loop removed)
+- `overwriteFile` with null previous content deletes the file on disk
+- Anthropic adapter: completions + `list()` implemented; FIM omitted (autocomplete already removed)
+
+### Skills, Rules & Context Providers
+
+- Documented merge order for system message / rules / skills / prompts / memory
+- Rules `applyTo` glob filter against open files; skill intent matching injects suggested-skill hints
+- Remote skills hashed/pinned; default `@` providers always ensured (file/diff/problems/repo-map/terminal/memory)
+- Niche integrations key-gated; dead CodeOutline/CodeHighlights stubs removed
+
+### GUI Stream & Slash Robustness
+
+- Cancel stream leaves tool conversations consistent (`clearDanglingMessages`)
+- Prompt-based slash commands expand client-side and stream with tools
+- Find widget supports regex (`.*`); checkpoint index association is deterministic
+- Deprecated JSON `customCommands` warn toward removal in V1.4; `.prompt` / `.prompts` loaders unified
+
+### Reliability, i18n & Tests
+
+- Leveled `knoxLog` logger (prod/binary default quiet); strip noisy production debug logs
+- en/zh locale key parity enforced in CI; ban raw English `show*Message` in agent/checkpoint paths
+- Critical-path vitest coverage: models, tool routing, web search, compaction, todo evidence, config/org, middleware validation
+- Debug tracker re-enabled with 300ms debounced `@debugger` refresh; DAP `continued` event fixed
+- VsCodeWebviewProtocol `invoke` / `onError` implemented (no stub throws)
+
 ## V1.3.3
+
 
 ### Autocomplete — Removed
 
@@ -197,8 +271,8 @@ Fast, It's damn fast!
 - **LLM Reranking** — Optional LLM-based reranking pass on top-K retrieval candidates
 - **Frozen Snapshot Pattern** — Session-scoped context caching with automatic invalidation after significant changes
 - **Memory Provider Interface** — Plugin architecture for external memory backends (cloud, team-shared, vector DBs)
-- **Cloud Sync** — Compressed backup/restore of memory database with cloud storage integration
-- **Knox-MS Server Sync** — Background sync of local memories to Knox-MS server with change tracking and conflict resolution
+- **Cloud Sync** — Compressed backup/restore of memory database with cloud storage integration *(removed in V1.3.2 — memory is local-only)*
+- **Knox-MS Server Sync** — Background sync of local memories to Knox-MS server with change tracking and conflict resolution *(removed in V1.3.2)*
 - **Working Memory Persistence** — Serialize/restore working memory state across sessions with time-decay on restore
 - **Capacity-Aware Auto-Pruning** — Proactive consolidation triggered when memory count approaches configured limits
 - **Auto-Consolidation Scheduling** — Timer-based consolidation with capacity threshold checks
