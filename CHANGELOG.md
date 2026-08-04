@@ -1,3 +1,33 @@
+## V1.3.5
+
+- Beautify Checkpoints diff
+
+### Memory Brain — Knox-MS Local Alignment
+
+Complete local Knox-MS behavior parity — all memory in `~/.knox/memory/brain.sqlite`, no cloud sync or remote memory APIs. Full roadmap implemented and validated (70 automated regressions + checklist validator).
+
+- **8-phase memory pipeline** (φ₁–φ₈) — pre-turn, post-turn, retrieval, and sleep consolidation orchestrated end-to-end; phase counts and cycle-invariant status on Memory Overview
+- **Neural region pipeline** — sensory capture, attention gating, hippocampal encoding, prefrontal planning, amygdala salience boost into working memory, basal-ganglia procedural pattern record on post-turn extraction, hippocampus→prefrontal goal feedback
+- **M₁ sensory buffer** (~250ms ring buffer, configurable `sensory_buffer_ms`); editor change events stream into sensory ingest; M₁ included in hierarchy metrics
+- **5-tier hierarchy** (M₁–M₅) compression ratios (active/hot/warm/cold/frozen) wired to unlimited-context theorem `C_total = W_max + Σ |Mᵢ| / rᵢ`
+- **Effective Context Capacity dashboard** — W_max, hierarchy effective tokens, M₁–M₅ tier breakdown, last-build window utilization bar, C_effective trend via metrics snapshots
+- **Working memory** aligned to spec — configurable slots, 30K token budget cap, and TTL per session (`working_memory_max_slots`, `working_memory_token_budget`, `working_memory_ttl_seconds`)
+- **Sleep consolidation** full φ₇ cycle with sub-phase counts (NREM replay, decay, REM distill) shown in Memory Overview
+- **Ebbinghaus decay** — unified retention curve; configurable λ, θ_prune, and review-due list on Overview
+- **Retrieval fusion** — θ=0.6 cutoff and top-k=20 defaults (configurable); optional rule-based enhanced semantic scoring (`enable_enhanced_semantic`)
+- **Knowledge graph** — 5K entity cap with LRU refresh on re-mention, search, and fusion; depth-3 spreading activation (γ=0.7 decay); cap utilization bars on Overview and Graph view; graph explore respects configured max depth
+- **Context assembly** — C_goal injection (todo plan → session summary → last user message) with provenance in Injected Memories panel; up to 100K token budget (2K–100K slider); compress-oldest overflow with `memory_tokens_saved` metrics
+- **Memory modes** — `full` / `summarized` / `selective` (high-threshold minimal injection); persisted in local memory preferences
+- **Session consistency** — IDE session ID is single source of truth; session switch closes prior brain session and restores working memory; `project_id` backfill on sessions
+- **Local memory preferences** — expanded settings in Memory → Settings (memory mode, context budget, auto_summarize, summarize_threshold, enable_knowledge_extraction, `post_turn_min_chars`, `sensory_buffer_ms`, `memory_build_timeout_ms`, memory_scope, enhanced semantic, task-routing models); no network fetch
+- **Post-turn knowledge extraction** — facts, concepts, and patterns categorized into semantic memory and linked to graph entities; fires when turn length ≥ `post_turn_min_chars` (or tool use); respects `enable_knowledge_extraction`
+- **Cross-session history** — Session History tab with full episodic + semantic browse; debounced cross-session backlog search
+- **Project-scoped memory** — `memory_scope`: `project` (workspace hash) | `global`; retrieval, context build, and backlog search filter to current workspace by default
+- **Local autonomous loop** — `/autonomous <goal>` slash command; multi-step agent loop with memory pipeline per iteration; task router resolves easy/medium/hard models each iteration; responsive **cancel** via abort signal; checkpoints after each step; PlanTaskStatusPanel progress UI
+- **Local task routing** — difficulty scoring (message length, code blocks, tool count) maps to user-configured easy/medium/hard models in Settings
+- **Chat memory injection** — bounded context-build timeout; chat continues on timeout with “Memory unavailable” notice in Injected Memories panel
+- **Agent tools** — memory pipeline, effective context, phase status, metrics trend, autonomous loop start/cancel, session history, and backlog search exposed to the agent
+
 ## V1.3.4
 
 ### Agent — Undo, Verification & Apply
