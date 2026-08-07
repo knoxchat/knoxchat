@@ -1,3 +1,14 @@
+## V1.3.6
+
+- Responsive Session History Browser
+- Fix Node 24 crypto typing in brain export encrypt/decrypt and skill hash helper
+- Align `brain/getEffectiveContext` protocol type with `CompressionRatios` (active/hot/warm/cold/frozen) instead of loose `Record<string, number>`
+- Fix memory brain barrel export — export `calculateHierarchyEffective`, `getMemoryLevelSpecs`, and related types from `MemoryHierarchy` (removed invalid `MemoryHierarchy` class re-export)
+- Type `BrainManager.consolidate()` as `SleepCycleResult` so sleep sub-phase counts (`sub_phases`) match runtime and tests
+- Fix `knoxChatModels` Vitest mocks — typed `localStorage` stub and remove invalid `reasoning: null` on model metadata
+- Update some phrases for multilingual
+- Remove Legacy JSON config
+
 ## V1.3.5
 
 - Beautify Checkpoints diff
