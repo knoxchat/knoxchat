@@ -1,3 +1,19 @@
+## V1.3.7
+
+### Chat UI
+
+- Move Chat History into the input toolbar overlay so sessions can be browsed without leaving chat; remove the title-bar History button
+- Add Configuration tab to the in-chat Checkpoints overlay (full parity with the former restore page); remove the title-bar Checkpoints button
+- Replace title-bar Memory icon with brain icon
+- Replace VS Code blue button/badge accents with Knox teal — dark `#159994`, light `#0f7a76` — for primary buttons, focus rings, and selected toolbar chips (e.g. Checkpoints)
+
+### Agent — Reliability
+
+- Unify agent toggle on `knox.toggleAgentMode` (keybinding + command palette)
+- Cap Agent tool-loop steps via `experimental.agentMaxSteps` (default **40**, `0` = unlimited) with Settings UI; on the cap, force a text-only summary turn and block further tools
+- Harden cancel / Stop: clear dangling `calling` tool UI, abort in-flight tools via `tools/cancel` + `AbortSignal`, kill local terminal commands (SIGTERM → SIGKILL), reject half-applied streaming diffs, and do not continue the agent loop after cancel
+- Keep Stop available while a tool is mid-flight (including after the LLM stream ends); Cancel on the tool card during `calling`
+
 ## V1.3.6
 
 - Responsive Session History Browser
@@ -307,11 +323,9 @@ Fast, It's damn fast!
 - **Input Sanitizer** — Security scanning on all memory writes (prompt injection, credential detection, invisible Unicode removal)
 - **Context Fencing** — Recalled memories wrapped in safe boundary tags to prevent instruction injection
 - **Tool Splitting** — Single 79-action memory tool split into 5 focused sub-tools: Memory, Memory Graph, Memory Sessions, Memory Manage, Memory Learn
-- **FTS5 Fusion Search** — SQLite FTS5 full-text search with BM25 ranking, trigram fuzzy matching, and Bloom filter deduplication (replaces vector embeddings)
-- **Multi-Strategy Retrieval** — Weighted fusion of FTS5, trigram, graph traversal, recency decay, and importance scoring with auto-detected query-type weights
-- **LLM Reranking** — Optional LLM-based reranking pass on top-K retrieval candidates
+- **FTS5 Fusion Search** — SQLite FTS5 full-text search with BM25 ranking, trigram fuzzy matching, and Bloom filter deduplication
+- **Multi-Strategy Retrieval** — Weighted fusion of FTS5 BM25, trigram, graph traversal, recency decay, and importance scoring with auto-detected query-type weights
 - **Frozen Snapshot Pattern** — Session-scoped context caching with automatic invalidation after significant changes
-- **Memory Provider Interface** — Plugin architecture for external memory backends (cloud, team-shared, vector DBs)
 - **Cloud Sync** — Compressed backup/restore of memory database with cloud storage integration *(removed in V1.3.2 — memory is local-only)*
 - **Knox-MS Server Sync** — Background sync of local memories to Knox-MS server with change tracking and conflict resolution *(removed in V1.3.2)*
 - **Working Memory Persistence** — Serialize/restore working memory state across sessions with time-decay on restore
