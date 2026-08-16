@@ -1,3 +1,87 @@
+## V1.3.8
+
+### Memory — Mass manage (checkpoint-style)
+
+- Memories tab: Select / Select All / Clear / Exit, sticky action bar, and a header checkbox
+- Bulk delete uses one transaction and one safety checkpoint (no per-row round trips)
+- Bulk pin / unpin, plus copy selected memories as JSON or Markdown
+- Filter by pin state, date grouping (Today / This Week / This Month / Earlier), Shift-click range select, Esc / ⌘A
+
+### Agent — Soul (memory × checkpoints)
+
+- One session id: GUI `session.id` binds AgentModeManager, workspace checkpoints, and Memory Brain
+- SoulEvent after mutating tools, deny, doom-loop, maxSteps, ask_user, worktree apply/discard, and compaction
+- First mutating tool of a turn always creates a workspace checkpoint (`soul-turn-…`)
+- Restore injects a system note; optional files + memory rewind (`rewind_memory` or Restore files and memory). Memory rollback/forget offers the linked file checkpoint
+- User Deny, Always (this chat), Ask/Edits/Auto flips, and background job complete/kill write a SoulEvent
+- GUI overlay, chat checkpoint button (Shift), and timeline CP stamps use the same restore modes
+- Post-turn memory includes settled tool names, status, and paths (not only assistant prose)
+- `builtin_workspace_checkpoint` (`list` / `create` / `restore`); explore/review subagents may recall but not write memory
+- Activity timeline shows workspace CP stamps; checkpoint overlay can filter to this session
+
+### Agent — Eval & honesty gate
+
+- CI golden tasks (no live LLM): StrReplace, multi-file `apply_patch`, test-fix loop, permission deny, maxSteps stop, abort mid-tool (`core/eval`)
+- PR checklist + `honestyGate` test: no new tool def without a `callTool` impl; do not claim SmartToolRouter as the default path
+
+### Agent — i18n
+
+- Translate leftover Agent UI: permission presets, path/command policy editor, background-job labels, and tool-error cards (en / zh)
+- Localize extension progress notifications (`Generating code`, structured-solve steps)
+
+### Agent — Background jobs panel
+
+- Agent tab **Jobs** chip lists detached shell jobs and in-flight `builtin_task` subagents (Claude Agent view lite)
+- Jobs list above the input matches **files changed**: click the header to show/hide rows; click a command to inspect output; Clear finished
+- Kill / dismiss from the panel; process-group kill so pipelines stop; richer PATH so `cargo` / Homebrew bins resolve from GUI-launched VS Code
+
+### Agent — Worktree isolation
+
+- Optional **Worktree** chip on the Agent tab (Claude `EnterWorktree`): edits and shell run in a `git worktree` until you **Apply** (copy files back) or **Discard**
+
+### Agent — Activity timeline & turn meter
+
+- Compact per-turn activity list after each user message: thinking → reads/searches → edits → tests/shell (click a step to jump to the tool card)
+- Agent input bar shows steps used / max, estimated tokens, elapsed time, and a Stop control while the turn is active
+
+### Agent — Subagents, Git, Ask User, Doom Loop
+
+- Stop repeated identical tool calls or failure streaks (default 3) and force a text-only summary (`experimental.agentDoomLoopThreshold`, `0` = off)
+- Add `builtin_task` child agents: `explore` / `review` (read-only) and `general` (full tools). Isolated context; parent gets a summary and files touched
+- Add `builtin_ask_user` for mid-run multiple-choice or short answers (never auto-approved)
+- Add `builtin_git_status` / `builtin_git_diff` / `builtin_git_log` / `builtin_git_commit` (no push/force). Prefer these over shell git
+- `composite_health_check` reports workspace facts instead of invented scores
+
+### Agent — Apply Patch, Permissions, Shell, Rules
+
+- Add `builtin_apply_patch` (Codex-style `*** Begin Patch` multi-hunk / multi-file, applied atomically with unified-diff output)
+- Session permission modes: **Ask** / **Edits** / **Auto** (cycle from the Agent tab or Shift+Tab). File edits auto-run in Edits; Auto is YOLO for the session without rewriting saved tool settings
+- Tool cards: **Deny** / **Always** (this chat) / **Approve**
+- Persistent terminal cwd across calls; tool results include exit code, duration, cwd, stdout, and stderr
+- Stream terminal stdout into the tool card while a command runs; long commands auto-background after ~30s (or `background: true`) and are polled with `builtin_await_shell`
+- Run independent read tools in parallel when the model emits multiple tool calls; file writes stay sequential
+- Load `AGENTS.md`, `CLAUDE.md`, and `.knox/AGENTS.md` with `.knoxrules` (Knox-specific wins). Nested `AGENTS.md` is picked up from the open file’s folders
+- Path & command policy: `allow` / `ask` / `deny` globs (editor in Tools permissions). Deny always wins, including in Auto. Defaults block `rm -rf`, `~/.ssh`, and similar; paths outside the workspace ask (configurable). AGENTS.md supports `always` / `ask` / `never` blocks
+
+### Agent — One Switch
+
+- Sync the Chat/Agent tab (`session.mode === "agent"`) with VS Code `AgentModeManager` — one Agent switch for tools, checkpoints, undo, shadow preview, and verification
+- `knox.isAgentModeActive` now reports real status (not merely that the manager was constructed); command-palette toggle updates the tab and vice versa
+
+### Agent — Edit & Discovery Tools
+
+- Add `builtin_edit_file` (exact `old_string` → `new_string`; fail on 0 or multiple matches unless `replace_all`) on the default tool list, with undo snapshots and post-edit verification
+- Add `builtin_write_file` for full-file create or overwrite; prefer over shell `cat` / `echo` / heredoc writes
+- Teach the model the canonical edit path in the system prompt: read before edit, prefer StrReplace, never write files via the terminal; `composite_smart_edit` stays opt-in/legacy
+- Add `builtin_glob` for file find by pattern (`**/*.ts`, `src/**/*.tsx`)
+- Grep (`builtin_exact_search`): skip binary files (ripgrep default); document line numbers, path globs, context lines, and head limits
+- Clarify `builtin_view_subdirectory`: depth limits, ignore globs, and stable sorted output; point pattern-only finds at Glob
+
+### Agent — Permissions
+
+- Safer defaults: reads auto-run; writes, terminal, and web ask first (unknown tools ask)
+- One-click **Ask on write** and **YOLO** (full auto) presets in the tool permissions dialog; existing saved settings are unchanged until a preset is chosen
+
 ## V1.3.7
 
 ### Chat UI
