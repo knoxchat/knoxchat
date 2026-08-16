@@ -1,3 +1,24 @@
+## V1.3.9
+
+### Agent — Auto-approve by default
+
+- Catalog tools default to Auto-Approve; Ask on write remains a preset
+- Auto-Approve (including Await Shell wait/kill) runs immediately — no Deny / Always / Approve popup
+- Cancel is an X on the input bar only (no duplicate stop on the turn meter)
+
+### Agent — Unexpected tool abort resumes
+
+- If a tool is aborted by Core/IPC (not the user hitting Stop), write an error tool result and continue the model instead of ending the turn silently
+- Canceled tool cards say Canceled, not Processing
+
+### Agent — DSML tool-call leak
+
+- Parse `<｜DSML｜…>` tool markup (fullwidth `｜`, U+FF5C) instead of printing the tags and stopping the turn
+- Hold tags back while they stream so they never flash in chat; convert them to real tool calls (`builtin_read_file`, shell, etc.)
+- Also accept `<｜DSML｜function_calls>` wrappers and incomplete blocks at end-of-stream
+- Recover leaked markup from the current turn even when a thinking block is last, and from subagent / eval streams that skip the GUI recover path
+- Strip DSML from chat history so it is not replayed to the model on the next turn
+
 ## V1.3.8
 
 ### Memory — Mass manage (checkpoint-style)
