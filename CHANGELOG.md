@@ -1,3 +1,82 @@
+## V1.4.0
+
+### Agent — Live status rows follow
+
+- Activity list above the input sticks to the latest row while the agent is working, same as chat streaming
+- Scroll up to browse earlier steps without jumping; scroll back to the bottom to resume following new rows
+
+### Checkpoints — Complete restore
+
+- First checkpoint (and each agent-turn baseline) captures every tracked file, not only files that changed after the session started
+- Restore rewinds the whole tree as it was at capture time, including files you never edited
+- Evicting old checkpoints folds unique file content into the next one so newer restore points stay complete
+- Restore reports the files actually written, not a partial change list
+
+### Checkpoints — Safety
+
+- Restore and import cannot write outside the workspace
+- Secrets (`.env`, keys, credentials) are ignored by default unless you opt in
+- Checkpoint writes are atomic with integrity checksums; tampered or truncated data is rejected instead of partially applied
+- Restore is all-or-nothing: cancel or a crash rolls back instead of leaving a mixed tree
+- Overlapping create / restore / delete operations wait or prompt so two restores cannot interleave
+
+### Checkpoints — Storage
+
+- Unique file contents are stored once; optional compression; checkpoint records no longer embed full source
+- History stays a lightweight index; if it is lost, the list rebuilds from on-disk records
+- Storage quotas evict the oldest unpinned checkpoints; pin important restore points so they survive cleanup
+- Each workspace folder has its own isolated store, including multi-root windows
+- Large repos scan faster: deep trees are included, ignored directories are skipped
+- Binaries and UTF-16 text round-trip without corruption; oversized or unreadable files are skipped with a warning
+- Optional encryption at rest for stored file contents (key in the OS keychain)
+- Checkpoint IDs stay unique across export and import
+
+### Checkpoints — Auto-capture and settings
+
+- Advertised settings drive the engine (compression, quotas, auto-interval, smart tracking, inline diff)
+- Auto-checkpoint timers and file-change thresholds apply without reload
+- Create supports tags and include / exclude path filters; agent sessions can track only the files they touched
+- One file watcher per folder; undo stack and session labels survive reload
+
+### Checkpoints — Preview, selective restore, and file history
+
+- Preview a restore before any write: counts of added, modified, and deleted files, then restore all or selected files
+- Right-click a file for its checkpoint versions and restore that file only
+
+### Checkpoints — Agent
+
+- Agent can list, create, diff, preview restore, pin / unpin, restore, and delete
+- Restore still requires confirmation and never auto-runs
+
+### Checkpoints — Explorer, commands, and editor
+
+- Checkpoints appear in the Explorer sidebar, grouped by date, session, or pin, with restore / preview / diff / pin / delete
+- Command Palette uses one Checkpoints namespace (create, list, restore, stats, export / import, undo / redo, branches, health)
+- Keyboard shortcuts for create, undo, redo, open panel, and file history
+- Status bar shows health and last-checkpoint age; click opens the list
+- Optional inline diff decorations in the editor against a chosen checkpoint
+
+### Checkpoints — Overlay
+
+- List stays usable at hundreds of checkpoints: pagination, search by tag / path / session, compare any two checkpoints, keyboard range / delete / restore
+- Timeline, analysis, performance dashboard, and local share tabs show real data
+- English and Chinese strings for all shipped checkpoint screens
+
+### Checkpoints — Branching
+
+- Named local branches; new checkpoints attach to the active line
+- Switching branch does not auto-restore (you can restore to the branch head if you want)
+- Merge reports conflicting paths instead of silently overwriting
+
+### Checkpoints — Analysis, health, and sharing
+
+- Local risk / impact hints and grouping by session, time, or path
+- Performance dashboard uses real restoration history, storage stats, and AI session line / rollback counts
+- Local audit log for create, restore, delete, pin, import, and export
+- Health check verifies integrity and can rebuild the index, collect unused storage, and finish or roll back an interrupted restore
+- Export / import uses checksummed local bundles; truncated or tampered files are rejected
+- Share is a local bundle file (email, USB, PR artifact) — no cloud or network
+
 ## V1.3.9
 
 ### Agent — Auto-approve by default
