@@ -4,8 +4,7 @@
 
 Bring your own models. Anthropic Claude, OpenAI GPT, DeepSeek, Gemini, Qwen, Grok, GLM, Codestral, Sonar Pro, and Knox's On-Demand model `knox/knox-ms` are supported out of the box.
 
-| ![](https://docs.knox.chat/img/main-ui.png) |
-|-|
+[![Video Title](https://docs.knox.chat/img/main-ui.png)](https://www.youtube.com/watch?v=jx2tMqUGcuk)
 
 **Three systems. One loop.**
 
