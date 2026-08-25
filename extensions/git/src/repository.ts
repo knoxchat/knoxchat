@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { cp } from '@vscode/fs-copyfile';
-import { TelemetryReporter } from './noopTelemetryReporter';
 import { uniqueNamesGenerator, adjectives, animals, colors, NumberDictionary } from '@joaomoreno/unique-names-generator';
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
@@ -361,22 +360,24 @@ class ProgressManager {
 
 	private enabled = false;
 	private disposable: IDisposable = EmptyDisposable;
+	private readonly disposables: IDisposable[] = [];
 
 	constructor(private repository: Repository) {
 		const onDidChange = filterEvent(workspace.onDidChangeConfiguration, e => e.affectsConfiguration('git', Uri.file(this.repository.root)));
-		onDidChange(_ => this.updateEnablement());
+		onDidChange(_ => this.updateEnablement(), null, this.disposables);
 		this.updateEnablement();
 
 		this.repository.onDidChangeOperations(() => {
 			// Disable input box when the commit operation is running
 			this.repository.sourceControl.inputBox.enabled = !this.repository.operations.isRunning(OperationKind.Commit);
-		});
+		}, null, this.disposables);
 	}
 
 	private updateEnablement(): void {
 		const config = workspace.getConfiguration('git', Uri.file(this.repository.root));
+		const showProgress = config.get<boolean>('showProgress') === true;
 
-		if (config.get<boolean>('showProgress')) {
+		if (showProgress) {
 			this.enable();
 		} else {
 			this.disable();
@@ -414,6 +415,7 @@ class ProgressManager {
 
 	dispose(): void {
 		this.disable();
+		dispose(this.disposables);
 	}
 }
 
@@ -912,7 +914,6 @@ export class Repository implements Disposable {
 		historyItemDetailProviderRegistry: ISourceControlHistoryItemDetailsProviderRegistry,
 		private readonly globalState: Memento,
 		private readonly logger: LogOutputChannel,
-		private telemetryReporter: TelemetryReporter,
 		private readonly repositoryCache: RepositoryCache
 	) {
 		this._operations = new OperationManager(this.logger);
@@ -951,9 +952,9 @@ export class Repository implements Disposable {
 		// a worktree repository to be opened while the main repository
 		// is closed.
 		const parentRoot = repository.kind === 'submodule'
-				? repository.dotGit.superProjectPath
-				: repository.kind === 'worktree' && repository.dotGit.commonPath
-					? path.dirname(repository.dotGit.commonPath)
+			? repository.dotGit.superProjectPath
+			: repository.kind === 'worktree' && repository.dotGit.commonPath
+				? path.dirname(repository.dotGit.commonPath)
 					: undefined;
 		const parent = parentRoot
 			? this.repositoryResolver.getRepository(parentRoot)?.sourceControl
@@ -966,8 +967,15 @@ export class Repository implements Disposable {
 				? new ThemeIcon('worktree')
 				: new ThemeIcon('repo');
 
-		// Hidden when there is no workspace folder (empty window).
-		this._isHidden = workspace.workspaceFolders === undefined;
+		// Hidden
+		// This is a temporary solution to hide:
+		// * repositories in the empty window
+		// * worktrees created by Copilot when the main repository
+		//   is opened. Users can still manually open the worktree
+		//   from the Repositories view.
+		this._isHidden = workspace.workspaceFolders === undefined ||
+			(repository.kind === 'worktree' &&
+				false);
 
 		const root = Uri.file(repository.root);
 		this._sourceControl = scm.createSourceControl('git', 'Git', root, icon, this._isHidden, parent);
@@ -1254,6 +1262,9 @@ export class Repository implements Disposable {
 			async () => {
 				await this.repository.add(resources.map(r => r.fsPath), opts);
 				this.closeDiffEditors([], [...resources.map(r => r.fsPath)]);
+
+				// Accept working set changes across all chat sessions
+				commands.executeCommand('_chat.editSessions.accept', resources);
 			},
 			() => {
 				const resourcePaths = resources.map(r => r.fsPath);
@@ -1441,6 +1452,8 @@ export class Repository implements Disposable {
 						opts.requireUserConfig = config.get<boolean>('requireGitUserConfig');
 					}
 
+					// Add AI co-author trailer if applicable
+					message = await this.appendAICoAuthorTrailer(message, indexResources, workingGroupResources);
 
 					await this.repository.commit(message, opts);
 					await this.commitOperationCleanup(message, indexResources, workingGroupResources);
@@ -1460,10 +1473,65 @@ export class Repository implements Disposable {
 		}
 		this.closeDiffEditors(indexResources, workingGroupResources);
 
+		// Accept working set changes across all chat sessions
 		const resources = indexResources.length !== 0
 			? indexResources.map(r => Uri.file(r))
 			: workingGroupResources.map(r => Uri.file(r));
+		commands.executeCommand('_chat.editSessions.accept', resources);
+
+		// Clear AI contribution tracking for committed resources
 		commands.executeCommand('_aiEdits.clearAiContributions', resources);
+	}
+
+	private static readonly AI_CO_AUTHOR_TRAILER = 'Co-authored-by: Copilot <copilot@github.com>';
+
+	private async appendAICoAuthorTrailer(
+		message: string | undefined,
+		indexResources: string[],
+		workingGroupResources: string[]
+	): Promise<string | undefined> {
+		if (!message) {
+			return message;
+		}
+
+		const chatConfig = workspace.getConfiguration('chat');
+		if (chatConfig.get<boolean>('disableAIFeatures', false)) {
+			return message;
+		}
+
+		const config = workspace.getConfiguration('git', Uri.file(this.root));
+		const addAICoAuthor = config.get<'off' | 'chatAndAgent' | 'all'>('addAICoAuthor', 'off');
+
+		if (addAICoAuthor === 'off') {
+			return message;
+		}
+
+		// Don't add if trailer is already present
+		if (message.includes(Repository.AI_CO_AUTHOR_TRAILER)) {
+			return message;
+		}
+
+		const resources = indexResources.length !== 0
+			? indexResources.map(r => Uri.file(r))
+			: workingGroupResources.map(r => Uri.file(r));
+
+		if (resources.length === 0) {
+			return message;
+		}
+
+		try {
+			const level = addAICoAuthor === 'all' ? 'all' : 'chatAndAgent';
+			const hasAiContributions = await commands.executeCommand<boolean>('_aiEdits.hasAiContributions', resources, level);
+			if (hasAiContributions) {
+				// Ensure proper trailer formatting: blank line before trailers
+				const trimmed = message.trimEnd();
+				return `${trimmed}\n\n${Repository.AI_CO_AUTHOR_TRAILER}`;
+			}
+		} catch {
+			// Command may not be available (e.g., in web environment)
+		}
+
+		return message;
 	}
 
 	private commitOperationGetOptimisticResourceGroups(opts: CommitOptions): GitResourceGroups {
@@ -2888,40 +2956,9 @@ export class Repository implements Disposable {
 		const limit = scopedConfig.get<number>('statusLimit', 10000);
 		const similarityThreshold = scopedConfig.get<number>('similarityThreshold', 50);
 
-		const start = new Date().getTime();
-		const { status, statusLength, didHitLimit } = await this.repository.getStatus({ limit, ignoreSubmodules, similarityThreshold, untrackedChanges, cancellationToken });
-		const totalTime = new Date().getTime() - start;
+		const { status, didHitLimit } = await this.repository.getStatus({ limit, ignoreSubmodules, similarityThreshold, untrackedChanges, cancellationToken });
 
 		this.isRepositoryHuge = didHitLimit ? { limit } : false;
-
-		if (didHitLimit) {
-			/* __GDPR__
-				"statusLimit" : {
-					"owner": "lszomoru",
-					"ignoreSubmodules": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Setting indicating whether submodules are ignored" },
-					"limit": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true, "comment": "Setting indicating the limit of status entries" },
-					"statusLength": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true, "comment": "Total number of status entries" },
-					"totalTime": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true, "comment": "Total number of ms the operation took" }
-				}
-			*/
-			this.telemetryReporter.sendTelemetryEvent('statusLimit', { ignoreSubmodules: String(ignoreSubmodules) }, { limit, statusLength, totalTime });
-		}
-
-		if (totalTime > 5000) {
-			/* __GDPR__
-				"statusSlow" : {
-					"owner": "digitarald",
-					"comment": "Reports when git status is slower than 5s",
-					"expiration": "1.73",
-					"ignoreSubmodules": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Setting indicating whether submodules are ignored" },
-					"didHitLimit": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Total number of status entries" },
-					"didWarnAboutLimit": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "True when the user was warned about slow git status" },
-					"statusLength": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true, "comment": "Total number of status entries" },
-					"totalTime": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true, "comment": "Total number of ms the operation took" }
-				}
-			*/
-			this.telemetryReporter.sendTelemetryEvent('statusSlow', { ignoreSubmodules: String(ignoreSubmodules), didHitLimit: String(didHitLimit), didWarnAboutLimit: String(this.didWarnAboutLimit) }, { statusLength, totalTime });
-		}
 
 		// Triggers or clears any validation warning
 		this._sourceControl.inputBox.validateInput = this._sourceControl.inputBox.validateInput;
