@@ -1,3 +1,25 @@
+## V1.4.5
+
+- Task plan sits in the same attached stack above the input as Memories used and background jobs
+- Task plan tracks each step live from later file writes and commands, not only builtin_plan updates
+- Task plan steps use colored checkboxes instead of Pending / Done labels
+- Plan dumps no longer appear as related context items in the chat stream
+- Reloading a chat still injects the last Task Execution Plan into the model from history
+- Chat streaming stays steady while long unwrapped code lines generate; the thread no longer shakes with each token
+- Completed markdown sections stay put when the reply moves from a code fence to the next heading or list
+- Thinking and reasoning blocks use the same smooth streaming path as the main reply
+- Reasoning effort is remembered per model after you close and reopen the editor
+- File-read tool cards stay collapsed by default instead of showing an empty line 1
+- Context compacted sits in the same attached stack as Memories used and background jobs
+- Fix bug with etBundledSkillsPath()
+- Fix bug with createRequire
+- Fix duplication messages
+- Chat history list stays readable in a narrow sidebar: dates, titles, and actions no longer clip
+- Agent and autonomous no longer stop at 40 / 120 tool rounds by default; both run until done or Cancel
+- Autonomous outer iterations also default to unlimited (0); set a positive number in Memory settings to cap
+- Turn meter still shows steps used, activity rows, and outer-loop count; a used/max bar appears only when a cap is set
+- Switching Agent profile no longer overwrites a custom step cap with 40 / 60 / 120
+
 ## V1.4.0
 
 ### Agent — Live status rows follow
