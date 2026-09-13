@@ -1,3 +1,55 @@
+## V1.4.7
+
+### Slash `/` commands — Type a name, insert a chip, run the command
+
+- Type `/` for a grouped picker (Bookmarked, Recent, Commands, Prompts); descriptions sit next to the name instead of hugging the right edge
+- Search matches the command name and the description (`/shell` finds `/cmd`); `/cmt` still ranks `/commit`
+- Enter inserts a teal `/commit` chip; keep typing arguments after it. Hover shows the description, × removes the chip
+- Bookmark from the row; recently used commands rise to the top of an empty `/`
+- Arrow keys wrap, Home/End jump, Tab selects, Esc closes and keeps what you typed
+- The `/query` you are typing is highlighted while the picker is open
+- Empty search says no commands match, not “No files match”
+
+### @ mentions — Type a file name, insert a chip, attach the file
+
+- Type `@` plus a file or folder name (or a path like `gui/src`) to search the whole workspace; matching files show up in the top list without opening a submenu
+- Empty `@` shows open files and providers; as you type, results group into Files, Folders, and Providers
+- Open files rank first, then exact names, then path matches; matching characters are highlighted
+- New files appear in the picker shortly after you create them; adding or removing a workspace folder updates results
+- Mentions insert as teal chips with a file or folder icon; hover shows the path, × removes the chip, click opens it in the editor
+- The `@query` you are typing is highlighted while the picker is open
+- Clicking a chip on a sent message still opens the file and does not reopen the picker
+- File and folder rows include Open in editor
+- Folder mentions attach a directory listing; file mentions still attach the file contents
+- `@repo-map` lists workspace folders again, not only the entire codebase
+- Arrow keys wrap, Home/End jump, Tab selects, Esc closes and keeps what you typed; Back returns from a submenu
+- The picker stays on screen in a narrow sidebar and stays readable in light and dark themes
+- `@diff`, `@problems`, `@terminal`, and `@memory` still work as before
+
+- Update VS Code 1.136.0
+- Remove ONNX Runtime
+
+
+## V1.4.6
+
+- Fix: Cancel was stopping the parent stream but leaving child agents and background shells running
+
+### Memory — Stay on the current question
+
+Injected memories no longer cling to the previous topic after you switch tasks or say “continue”.
+
+- Short follow-ups like “continue” and “ok” pull memories for the work you were just doing, not leftover stopwords
+- A memory has to actually match the current question (words, a named thing, or a pin) before it is injected
+- Switching topics clears the old scratchpad; “continue” keeps the current one
+- The goal shown for the turn is your current ask, not the last stored fact
+- Unrelated pinned items and old session summaries no longer crowd out what matches this turn
+- Duplicate facts update the existing memory instead of creating a second copy; filler like “I'll update the file” is not stored
+- Common words like “file” or “config” no longer drag in unrelated memories
+- Wrong injects are not ranked higher next time just because they showed up once
+- **Not relevant** in Memories used demotes an item for this topic without deleting it; Pin later brings it back. Forget still deletes
+- Memories used shows why an item matched (score and evidence). In selective mode, weaker items stay collapsed
+- Memory → Settings has a Retrieval Precision section to tune how strict injection is
+
 ## V1.4.5
 
 - Task plan sits in the same attached stack above the input as Memories used and background jobs
@@ -19,6 +71,158 @@
 - Autonomous outer iterations also default to unlimited (0); set a positive number in Memory settings to cap
 - Turn meter still shows steps used, activity rows, and outer-loop count; a used/max bar appears only when a cap is set
 - Switching Agent profile no longer overwrites a custom step cap with 40 / 60 / 120
+
+## V1.4.4
+
+- Agent no longer stops after editing a file
+- Failed edits are returned to the model so it can retry instead of aborting the turn
+- Writes to files already open in the editor apply through the buffer (no revert-dialog race)
+- Make tool outcomes explicit
+- Enhance Memory System
+- Enhance Checkpoints System
+
+## V1.4.3
+
+- Beautify Checkpoints Timeline list UI
+- File search no longer walks the whole workspace during startup
+- System CA setup no longer blocks activate
+- First paint no longer waits on IndexedDB migration
+
+## V1.4.2
+
+### Agent — One loop for chat, autonomous, and subagents
+
+- Agent chat, `/autonomous`, child agents, and scripted eval share the same tool loop: streaming replies, permission prompts, stop, doom-loop, and step budget
+- `/autonomous` now actually edits, searches, and runs commands instead of writing a text-only plan; live tool cards appear in Agent chat while it runs
+- Ask / Accept / Auto use the same permission rules as chat; writes still wait on the bar unless Auto is on
+- The turn meter shows outer-loop iteration banners for autonomous runs (started, each iteration, completed)
+- Consecutive read-only tools in one turn still run in parallel; writes stay sequential
+
+### Agent — Systems profile for kernel and QEMU work
+
+- New **systems** profile: 120 tool steps per turn (default remains 40), doom-loop after 5 identical failures (default 3), and compile as the post-edit check
+- Auto-selects systems when the workspace looks like a Linux kernel or QEMU; an explicit step cap or verify command still wins
+- Turn meter shows a systems label; zero still means unlimited (hard cap 1000)
+- Agent config covers profile, verify mode / command / iterations, job log directory, and await timeout
+
+### Agent — Rust profile for Cargo workspaces
+
+- New **rust** profile: 60 tool steps per turn, doom-loop after 4 identical failures, and `cargo check --workspace --all-targets` as the post-edit check
+- Auto-selects rust when the workspace root has `Cargo.toml`; kernel / QEMU still win on mixed trees (a rust-for-linux tree stays systems)
+- An explicit verify command still wins; GUI can pick Rust or Auto, and the turn meter shows a rust label
+- First-turn **Codebase Card** for Cargo: crate / edition, workspace members, rust-toolchain / clippy / rustfmt files, and crate versions pinned from `Cargo.lock` (missing lock asks for `cargo generate-lockfile` — versions are not invented)
+- Bundled rust skill: fmt → check → clippy `-D warnings` → test; prefer rust-analyzer hover over guessed method names; `rustc --explain` on the first error code
+- Checkpoints ignore Cargo `target/`, rlib, rmeta, and incremental artifacts so restore stays source-only; `Cargo.lock` is kept so pinned crate versions stay accurate
+
+### Agent — Compile and boot as the oracle
+
+- After edits, a configured verify command (or the systems / rust profile) runs the compiler or test instead of waiting on editor diagnostics
+- C, assembly, Kconfig, and device-tree edits skip language-server auto-fix even without a command, and the model is told to build
+- Build output is parsed for gcc / clang / kbuild, rustc / clippy, linker, make / ninja / meson, cargo test / nextest, kselftest / KUnit failures, and Linux oops / panic / KASAN
+- rustc and clippy JSON keep error codes, clippy lint ids, and machine-applicable `Suggested fix:` replacements the agent can apply instead of guessing
+- A kernel panic, sanitizer hit, or kselftest failure counts as a failed check, not a clean verify
+- Identical error signatures trip a circuit-breaker so the agent does not keep patching the same failure
+- Clean builds and failed builds are remembered with high importance so restore and recall keep the last oracle
+
+### Agent — Cargo as the compile oracle
+
+- On the rust profile (or any `cargo …` verify command), post-edit truth is `cargo check`, not rust-analyzer auto-fix
+- If rust-analyzer is live, its typed diagnostics are used; if it is missing or not ready, LSP is skipped and the model is told to `builtin_build` or install rust-analyzer (empty `.rs` hover never mentions `compile_commands.json`)
+- After a **green** check: `cargo fmt --check`, then clippy `-D warnings` (library crates also deny `unwrap_used`, `expect_used`, and `await_holding_lock`). Red check skips fmt / clippy so the inner loop stays fast
+- Edits under `crates/foo` compose `-p foo` (never `-p` together with `--workspace`); inner check / clippy never default `--all-features`
+- Chat and `/autonomous` will not treat a no-tool “fixed” message as done while the last cargo / clippy / test oracle is red
+- `builtin_build` refuses `cargo clean`, `publish`, `login`, `yank`, and `cargo fix --broken-code`; missing cargo returns an install-rustup message instead of a failed spawn
+- Extra actions on the same build tool: clippy, fmt, test (optional doctests), rustc `--explain`, rustdoc lookup, `cargo fix --allow-dirty`, expand, miri, tree, deny, audit. Missing cargo-expand / cargo-deny / cargo-audit / miri return install hints
+- rustdoc lookup reads `target/doc/<crate>.json` when present; otherwise it points at the locked `vendor/` or `~/.cargo/registry` source — not docs.rs
+- Registry and git checkout trees are readable; writes under `~/.cargo/registry` and `~/.cargo/git` are denied
+
+### Agent — Rust idiom gates
+
+- Borrow-checker errors (E0502 and other named E04 / E05 / E06 codes) append an ownership remedy: split borrows, index access, `mem::take` — not `.clone()` / `Arc<Mutex<_>>` without a reason
+- New `.clone()`, `Arc::new`, `Mutex`, `RefCell`, or `Rc` without `// share:` or `// owned:` is flagged (the edit is not auto-reverted)
+- New `unsafe` (block, fn, impl, or trait) without `// SAFETY:` is flagged; the model is told to run miri before claiming soundness
+- Deleting asserts, adding `#[ignore]`, or using `todo!()` / `unimplemented!()` to make tests green is rejected unless you explicitly asked to change tests
+- Trait coherence errors (E0117 / E0119) remind the model to use a newtype, not thrash impl headers
+
+### Agent — Rust-aware subagents
+
+- `rust-review` (readonly): unwrap / expect, needless clone or Arc, non-Send futures, missing docs / examples on new `pub` items, semver
+- `rust-borrowck` (readonly): ownership and lifetime errors after a failed borrow-check
+- `rust-architect`: write an ADR with the plan tool before new public APIs or type topology — no nested `task`
+- Soft routing only (no automatic spawn): borrowck after one failed borrow attempt; review before claiming done; architect for new public APIs
+
+### Agent — Doom-loop understands rebuilds
+
+- Rebuilds (make, ninja, QEMU boot, await, interactive read) fingerprint the **error**, not the command: a new compiler line or a new oops RIP is progress
+- Mutating edits reset the streak; identical searches still stop the loop
+- Three identical makes or QEMU boots with the same error still stop and force a summary (five on systems)
+
+### Shell — Hour-long builds and job logs
+
+- Make, ninja, cmake build, meson compile, configure, QEMU, and `cargo check|build|test|clippy|nextest|bench|doc|miri` start in the background immediately unless you ask to wait (`cargo metadata`, `cargo tree`, and `cargo fmt --check` stay in the foreground)
+- Await-shell default wait is 10 minutes (override via job timeout); a multi-minute wait no longer hits the generic tool timeout
+- Every job writes a full log; the jobs panel shows the path
+- Await supports tail, grep, resume from a byte offset, and errors-only (parsed diagnostics instead of the whole make log)
+- Truncated make / ninja / gcc / cargo / QEMU output returns parsed errors plus the last lines, not a huge compile transcript
+- Completed jobs feed the terminal error classifier: compiler errors, undefined references, kernel panic, QEMU, ninja / kselftest failures; a kernel make does not suggest npm install
+
+### Shell — Interactive sessions for QEMU, GDB, and consoles
+
+- Start, send, and read interactive sessions (QEMU, GDB, kgdb, shells) with a job id and a full log
+- Prefers a native TTY when available so Ctrl-C is a real interrupt; otherwise falls back to piped input
+- Send supports interrupt and end-of-input; read waits from the last offset or a byte position
+- Interactive jobs appear in the same jobs panel as background shells
+
+### Agent — Compaction keeps the development loop
+
+- When history is compacted, the last compiler errors (including rustc `E0xxx` and clippy lint ids), verify command (`make` or `cargo …`), background job ids, QEMU / GDB descriptors, failing test, oops RIP / call-trace, monitor VM status, and the task plan are pinned as development-loop state
+- Verbose serial and make output keep RIP and job identifiers instead of collapsing to a short header
+- Compiler spam is summarized as file counts plus file:line errors
+
+### Agent — Persistent task plan
+
+- Create, add, update, complete, skip, set current, list, and clear a multi-step plan that is injected every Agent turn (including autonomous iterations)
+- The plan survives compaction so a kernel-scale checklist is still visible after hours of work
+
+### Navigation — Large trees (kernel / QEMU scale)
+
+- Directory walk always recurses; glob, repo map, and tree share the same ignore rules
+- Walks honor git and Knox ignore files, and skip kernel images and modules even without an ignore file
+- Repo map lists subsystem directory counts first so large trees survive the token budget; signatures only for the top-ranked files (maintainers, makefiles, Kconfig, git-touched, query, recent mtime)
+- Incremental repo-map cache; zoom into a path
+- Glob walk and result caps are explicit: truncation tells you to narrow the path, not a silent short list
+- Out-of-tree build directories, dependencies, and object files stay skipped unless the pattern asks for them or the search is already rooted in a build tree
+- Search default 50 hits; systems / kernel workspaces default 200; truncation says to pass max results, path, or file type
+- Repo map and signatures understand assembly entry points, Makefile targets, Kconfig symbols, and linker entries
+- Over-budget reads return line count, first and last lines, and a hint to use a line range — not a truncated middle; binaries, objects, kernel images, and modules are refused
+- First-turn **Codebase Card** for kernel, QEMU, and Cargo: how to build and search, top-level dirs, architecture from config symbols only (the config is not dumped)
+- Maintainers lookup / search / list from MAINTAINERS globs without dumping the rest of the file
+
+### Navigation — Language server, tags, and compile database
+
+- Workspace symbol search uses the query you passed (it no longer always searches empty)
+- Empty C go-to-definition distinguishes **no compile database** (generate it once with bear or clang-tools) from **no language server**; include paths are not invented
+- Empty Rust hover / go-to-definition tells you to install rust-analyzer and use `builtin_build` / the locked registry source; it does not mention `compile_commands.json`
+- If workspace symbols are empty, fall back to ctags when present, and optionally cscope (not bundled)
+
+### Git — Blame, pickaxe, and bisect
+
+- Blame a file (optional line range, capped)
+- Log pickaxe: search for added or removed strings, or a regex
+- Bisect start / good / bad / skip / run / status / reset; run executes an oracle command until the first bad commit; always resets on abort; never force
+
+### Debug — Debugger as an Agent tool
+
+- Launch, attach, breakpoint, continue, step, backtrace, locals, evaluate, status, and disconnect through VS Code’s debugger
+- Offered only on the systems profile or when a debug session is already active
+
+### QEMU and serial
+
+- Start a QEMU job from a command line (kernel, initrd, serial, optional gdbstub); optional human monitor on stdio with guest serial in the job log
+- Stop kills the process group; status waits for serial and prepends a parsed oops when present
+- Monitor commands prepend VM status and RIP
+- `@serial` tails recent QEMU and interactive-session logs with oops parsed; the same tail can be injected as context
+- Oops / panic / KASAN / UBSAN / QEMU guest fault / gcc ASan are parsed for RIP / symbol, tainted, and call-trace locations
 
 ## V1.4.0
 
