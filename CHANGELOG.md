@@ -1,3 +1,36 @@
+## V1.4.8
+
+### Long chats — Stay open through hours of agent work
+
+The sidebar used to go blank or freeze during long sessions. Chat and Agent mode now stay usable while replies and tool logs stream.
+
+- The panel stays interactive: you can scroll, type, and open finished tool results while the agent is still working
+- If the sidebar ever hangs, it reloads on its own and restores your last saved chat instead of staying gray
+- Opening a huge past chat shows the latest messages first; scroll up or use Load earlier messages for the rest
+- A notice appears when a chat is very large, so you know older tool output may be shortened on screen
+- One broken message shows an error on that row; the rest of the chat and the input keep working
+
+### Streaming — Read as it writes, without the thread shaking
+
+- Only the live reply updates as new text arrives; earlier messages stay still
+- Finished markdown, code, and tool cards no longer re-draw on every new word
+- Auto-scroll follows the latest output; scroll up to pause and read, then jump back to the bottom when you are ready
+- Your last sent prompt stays visible at the top while a reply is streaming, then returns to the thread if you scroll up
+- Find in chat still finds text in older messages, even if they are not on screen yet
+- Chat is saved after a reply finishes, not on every word, so the panel stays snappy
+
+### Tool results — Expanded by default, heavy output stays light
+
+- Finished tool cards stay open so you can read the result in place; click to collapse a card to a one-line summary
+- Collapsed code shows a short preview instead of the whole file; expand for more, or open it in the editor
+- Command output shows the recent lines; copy the full output or open the log when you need everything
+- Directory listings and repo maps load when you expand them, not all at once when the chat opens
+- Large tool dumps are shortened on screen so the chat stays fast; the agent still sees the full results
+
+### Fixed
+
+- Back arrow icon not in place
+
 ## V1.4.7
 
 ### Slash `/` commands — Type a name, insert a chip, run the command
