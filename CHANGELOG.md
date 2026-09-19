@@ -1,3 +1,7 @@
+## V1.4.9
+
+- Add Jev for harness
+
 ## V1.4.8
 
 ### Long chats — Stay open through hours of agent work
