@@ -1,3 +1,41 @@
+## V1.5.0
+
+### Knox OAuth2 — Connect without pasting an API key
+
+Adding a KnoxChat model used to mean creating a key on knox.chat or knoxstudio.ai, copying it, and pasting it into **Add Chat Model** every time. That is easy to get wrong, leaves `sk-` secrets in `~/.knox/config.yaml`, and repeats the same secret on every model.
+
+Sign in once with KnoxStudio instead. KnoxChat runs the same OAuth2 + PKCE flow as KnoxStudio Desktop, mints a local `sk-` key named **KnoxChat**, and reuses it for every new model.
+
+- **Add Chat Model** shows **Sign in with KnoxStudio** instead of a required API key field
+- After **Connected as @you**, Connect works with no paste; later models inherit the same session
+- A yaml `apiKey` is still an override if you edit `~/.knox/config.yaml` by hand
+- Sign out revokes the **KnoxChat** key on the server; you can also manage it at [knoxstudio.ai/keys](https://knoxstudio.ai/keys) or under Connected apps
+
+`~/.knox/config.yaml` is a plaintext file. Anything with an `apiKey:` line is readable by other processes, easy to commit or back up, and duplicated on every model you add. The OAuth session key never goes there.
+
+It is stored in the editor’s encrypted extension storage (AES-256-GCM), with the wrapping key in VS Code SecretStorage (the OS keychain). Account metadata (`@you`, token id) is kept separately so the UI never has to read the secret. Chat injects the key in memory only for `knoxchat` models that have no yaml `apiKey`.
+
+Copy-paste is a shared secret sitting in a text file. OAuth is a one-time browser consent, a key encrypted at rest outside yaml, and the same login you already use for KnoxStudio.
+
+### Jev — One Knox key, same API as chat
+
+Jev (System One) now runs through Knox Chat with the API key you already use for models. There is no TypeSafe account, second key, or call to `api.typesafe.ai`.
+
+- Enable with `jev.enabled: true` in `~/.knox/config.yaml`, or **Settings → Jev harness judgments**
+- Reuses the `apiKey` on your `knoxchat` models, or the OAuth session key if yaml has none; optional `jev.apiKey` only if you want a Jev-only key
+- Always calls `https://api.knoxstudio.ai/v1/systemone` (`jev.baseUrl` is ignored)
+- Allow `jev-*` on the key at [knox.chat/keys](https://knox.chat/keys)
+- Fail-open to the current heuristics if Jev is off, no Knox key is found, or the call times out (800 ms)
+- Clearer errors for an invalid key (401), insufficient credits (402), and a key whose allowlist omits `jev-*` (403)
+
+Jev still only fills harness judgments (Chat vs View/Read, skill hints, context and tool gates, citation checks, `auto` profile confirm). It does not write code or replace the Agent loop.
+
+### Checkpoints
+
+The Checkpoints list under Explorer (below the file tree) is gone. It duplicated the overlay from the status-bar **CP** button and was a worse place to browse history.
+
+Use **CP** in the status bar (or the Knox sidebar Checkpoints tab) for list, details, restore, compare, pin, and delete. File history stays on Explorer / editor file context menus.
+
 ## V1.4.9
 
 - Add Jev for harness
