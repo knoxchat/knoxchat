@@ -1,3 +1,49 @@
+## V1.5.2
+
+- Tokens per second show on the meter above the message field while a reply is streaming
+- Fix Jev tool calling bugs
+- Remove Checkpoints button out of toolbar which above chat input field and all CheckPoint interface entry point through CP button on editor status bar
+
+### Memory in the editor
+
+**Memory** now opens in the editor instead of replacing the chat in the sidebar. Click **Memory** in the status bar, next to **CP**, or run **Knox: View Memory** from the Command Palette. Click it again to come back to the same tab. The brain button above the chat is gone.
+
+The panel has the same tabs as before: Overview, Memories, Sessions, Graph, and Settings. It reopens on the tab you last used. **Back to Chat** focuses the Knox chat in the sidebar. While the panel is open, it reloads after a chat turn, a memory tool call, or an edit to memories from the chat. A hidden panel reloads when you show it again. The Memories list does not reload while you are selecting rows or after you load more than the first page.
+
+### Checkpoint Graph
+
+Clicking **CP** in the status bar used to open a short popup list. Picking a row jumped straight into restore, with no way to see how checkpoints relate, which branch you are on, or what files changed.
+
+**CP** now opens **Checkpoint Graph**, a history view in the editor. Click **CP** again to come back to the same tab. After you create a checkpoint, **View history** opens this view too.
+
+The graph draws each checkpoint as a point on a colored lane. A branch that splits off gets its own lane, and a merge draws both sides back into one point. The current checkpoint is outlined. Checkpoints that are not on the active branch’s history are dimmed, and you can turn that dimming off. Branch names sit on the checkpoint each branch points at; the active branch is shown in its lane color. Your own tags appear beside them.
+
+Each row shows the description, how long ago it was saved, the kind of checkpoint (auto, agent, manual, or merge), and a short id. Hover a point to see whether it is the current checkpoint, which branches point at it, and its tags. The full time is in the tooltip.
+
+- Click a row to open its details: description, full id, kind, tags, session, time, and the files that changed. Click a file to open the diff beside the graph
+- Hold Cmd (Ctrl on Windows and Linux) and click a second row to compare the two checkpoints, then open a diff for any file that differs
+- Right-click a checkpoint to restore (with a preview of what will change), restore only some files, diff against your current files, compare, create a branch, pin or unpin, copy the id or description, export, or delete. Delete asks you to confirm in the graph
+- Right-click a branch name to switch to that branch, merge it into the active branch, delete it, or copy the name. Switching branches does not change your files. Restore is what writes files back. You cannot delete the branch you are on, or the default main branch
+- If you have edits that are not in a checkpoint yet, a row appears at the top. Open it to see those files, diff one, or save them as a new checkpoint
+
+Find matches the description, id, tags, file paths, and branch names. Press Cmd+F (Ctrl+F) to open it, then Enter to jump between matches. Escape closes one layer at a time: a dialog, then the menu, then find, then the open details.
+
+With a row open, Up and Down move to the previous or next checkpoint. Cmd+Up and Cmd+Down follow the same lane. Cmd+R refreshes. Cmd+H scrolls to the current checkpoint. Enter confirms the dialog that is open. These keys apply when the graph is focused.
+
+The bar along the top filters by branch, or shows only the active branch. In a workspace with more than one folder, a folder menu switches which history you are looking at. History loads a page at a time; use **Load more checkpoints** or scroll to the bottom for the next page. If the current checkpoint is further down, Cmd+H keeps loading until it is on screen.
+
+Drag a column edge to resize Description, Date, Kind, or Id. Right-click the header to show or hide Date, Kind, and Id. The graph and description stay visible. Your widths, hidden columns, branch filter, and dimming choice are kept when you reload the window. Creating, deleting, restoring, switching, or merging updates the graph without jumping you back to the top.
+
+A small settings menu on the bar chooses whether details open under the row or stay docked at the bottom, whether dates are relative or absolute, whether off-branch checkpoints start dimmed, and the lane colors. Full checkpoint settings — what to ignore, how much to keep, how deep to scan — stay on the Configuration tab. The menu links there.
+
+The same tabs as the checkpoints panel above the chat are on this view: **Graph**, **Checkpoints**, **Timeline**, **Analysis**, **Dashboard**, **Share**, and **Configuration**. Graph is selected when the view opens. Switch tabs to use those screens in the editor; come back to Graph and your place in the history is still there.
+
+The view is in English and Chinese, following the editor language. If no folder is open, checkpoint storage is still starting, or this workspace has no checkpoints yet, the graph says so and offers the next step: open a folder, wait, or create a checkpoint.
+
+## V1.5.1
+
+- Fix Jev relevant bugs
+
 ## V1.5.0
 
 ### Knox OAuth2 — Connect without pasting an API key
@@ -24,7 +70,7 @@ Jev (System One) now runs through Knox Chat with the API key you already use for
 - Enable with `jev.enabled: true` in `~/.knox/config.yaml`, or **Settings → Jev harness judgments**
 - Reuses the `apiKey` on your `knoxchat` models, or the OAuth session key if yaml has none; optional `jev.apiKey` only if you want a Jev-only key
 - Always calls `https://api.knoxstudio.ai/v1/systemone` (`jev.baseUrl` is ignored)
-- Allow `jev-*` on the key at [knox.chat/keys](https://knox.chat/keys)
+- Allow `jev-*` on the key at [knoxstudio.ai/keys](https://knoxstudio.ai/keys)
 - Fail-open to the current heuristics if Jev is off, no Knox key is found, or the call times out (800 ms)
 - Clearer errors for an invalid key (401), insufficient credits (402), and a key whose allowlist omits `jev-*` (403)
 
